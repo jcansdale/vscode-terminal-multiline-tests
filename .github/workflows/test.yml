@@ -8,18 +8,26 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         vscode-version: [stable, insiders]
-    name: VS Code ${{ matrix.vscode-version }}
+    name: ${{ matrix.os }} / VS Code ${{ matrix.vscode-version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - run: npm ci
-      - run: xvfb-run -a npm test
+      - name: Run tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm test
+        env:
+          VSCODE_VERSION: ${{ matrix.vscode-version }}
+      - name: Run tests (macOS)
+        if: runner.os == 'macOS'
+        run: npm test
         env:
           VSCODE_VERSION: ${{ matrix.vscode-version }}
