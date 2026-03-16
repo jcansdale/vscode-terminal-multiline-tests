@@ -14,28 +14,46 @@ for (let i = 1; i <= LINE_COUNT; i++) {
 // Total bytes: 19 lines × 55 chars + 18 newlines between lines + 1 trailing newline from echo = 1064
 const EXPECTED_BYTE_COUNT = EXPECTED_LINES.join('\n').length + 1;
 
-const COMMAND = `echo '${EXPECTED_LINES.join('\n')}' | wc -c`;
+const ECHO_BODY = `echo '${EXPECTED_LINES.join('\n')}'`;
+
+const commandVariants = [
+  {
+    suffix: '| wc -c',
+    command: `${ECHO_BODY} | wc -c`,
+    validate(content, label) {
+      const actual = parseInt(content.trim(), 10);
+      if (isNaN(actual)) {
+        return `${label}: expected a number, got ${JSON.stringify(content.trim())}`;
+      }
+      if (actual !== EXPECTED_BYTE_COUNT) {
+        return `${label}: expected ${EXPECTED_BYTE_COUNT} bytes, got ${actual}`;
+      }
+      return null;
+    },
+  },
+  {
+    suffix: '>',
+    command: ECHO_BODY,
+    validate(content, label) {
+      const actualLines = content.trimEnd().split('\n');
+      if (actualLines.length !== EXPECTED_LINES.length) {
+        return `${label}: expected ${EXPECTED_LINES.length} lines, got ${actualLines.length}`;
+      }
+      for (let i = 0; i < EXPECTED_LINES.length; i++) {
+        if (actualLines[i] !== EXPECTED_LINES[i]) {
+          return `${label}: line ${i + 1} differs:\n  expected: ${JSON.stringify(EXPECTED_LINES[i])}\n  actual:   ${JSON.stringify(actualLines[i])}`;
+        }
+      }
+      return null;
+    },
+  },
+];
 
 const shellMatrix = [
   { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'] },
   { shellPath: '/bin/zsh', shellArgs: ['-f', '-i'] },
   { shellPath: '/bin/dash', shellArgs: ['-i'] },
 ];
-
-function withRedirect(outputFilePath) {
-  return `${COMMAND} > "${outputFilePath}"`;
-}
-
-function validateOutput(content, label) {
-  const actual = parseInt(content.trim(), 10);
-  if (isNaN(actual)) {
-    return `${label}: expected a number, got ${JSON.stringify(content.trim())}`;
-  }
-  if (actual !== EXPECTED_BYTE_COUNT) {
-    return `${label}: expected ${EXPECTED_BYTE_COUNT} bytes, got ${actual}`;
-  }
-  return null;
-}
 
 async function waitForShellIntegration(terminal, timeoutMs) {
   if (terminal.shellIntegration) {
@@ -112,7 +130,7 @@ function createTerminal(name, shell) {
   });
 }
 
-async function assertExpectedOutput(paths, name, terminal) {
+async function assertExpectedOutput(paths, name, terminal, validate) {
   let firstOutput, secondOutput;
   try {
     firstOutput = await waitForFileText(paths.first, 7000, `first ${name}`);
@@ -125,8 +143,8 @@ async function assertExpectedOutput(paths, name, terminal) {
     secondOutput = '<timed out>';
   }
 
-  const firstError = firstOutput === '<timed out>' ? 'first: timed out' : validateOutput(firstOutput, 'first');
-  const secondError = secondOutput === '<timed out>' ? 'second: timed out' : validateOutput(secondOutput, 'second');
+  const firstError = firstOutput === '<timed out>' ? 'first: timed out' : validate(firstOutput, 'first');
+  const secondError = secondOutput === '<timed out>' ? 'second: timed out' : validate(secondOutput, 'second');
 
   let terminalText;
   try {
@@ -155,58 +173,60 @@ suite('Multiline terminal repro', () => {
   for (const shell of shellMatrix) {
     const shellName = path.basename(shell.shellPath);
 
-    test(`executeCommand twice (${shellName})`, async function () {
-      if (!fsSync.existsSync(shell.shellPath)) {
-        this.skip();
-      }
-      this.timeout(20000);
-
-      const paths = await createTempPaths();
-      const terminal = createTerminal(`executeCommand ${shellName}`, shell);
-
-      try {
-        terminal.show(true);
-
-        const shellIntegration = await waitForShellIntegration(terminal, 3000);
-        if (!shellIntegration) {
+    for (const variant of commandVariants) {
+      test(`executeCommand twice ${variant.suffix} (${shellName})`, async function () {
+        if (!fsSync.existsSync(shell.shellPath)) {
           this.skip();
         }
+        this.timeout(20000);
 
-        shellIntegration.executeCommand(withRedirect(paths.first));
-        await waitForFileText(paths.first, 7000, 'first executeCommand');
+        const paths = await createTempPaths();
+        const terminal = createTerminal(`executeCommand ${variant.suffix} ${shellName}`, shell);
 
-        shellIntegration.executeCommand(withRedirect(paths.second));
-        await assertExpectedOutput(paths, `executeCommand ${shellName}`, terminal);
-      } finally {
-        terminal.dispose();
-        await cleanupTempPaths(paths);
-      }
-    });
+        try {
+          terminal.show(true);
 
-    test(`sendText twice (${shellName})`, async function () {
-      if (!fsSync.existsSync(shell.shellPath)) {
-        this.skip();
-      }
-      this.timeout(20000);
+          const shellIntegration = await waitForShellIntegration(terminal, 3000);
+          if (!shellIntegration) {
+            this.skip();
+          }
 
-      const paths = await createTempPaths();
-      const terminal = createTerminal(`sendText ${shellName}`, shell);
+          shellIntegration.executeCommand(`${variant.command} > "${paths.first}"`);
+          await waitForFileText(paths.first, 7000, 'first executeCommand');
 
-      try {
-        terminal.show(true);
+          shellIntegration.executeCommand(`${variant.command} > "${paths.second}"`);
+          await assertExpectedOutput(paths, `executeCommand ${variant.suffix} ${shellName}`, terminal, variant.validate);
+        } finally {
+          terminal.dispose();
+          await cleanupTempPaths(paths);
+        }
+      });
 
-        // Wait for shell to be ready before sending text
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      test(`sendText twice ${variant.suffix} (${shellName})`, async function () {
+        if (!fsSync.existsSync(shell.shellPath)) {
+          this.skip();
+        }
+        this.timeout(20000);
 
-        terminal.sendText(withRedirect(paths.first), true);
-        await waitForFileText(paths.first, 7000, 'first sendText');
+        const paths = await createTempPaths();
+        const terminal = createTerminal(`sendText ${variant.suffix} ${shellName}`, shell);
 
-        terminal.sendText(withRedirect(paths.second), true);
-        await assertExpectedOutput(paths, `sendText ${shellName}`, terminal);
-      } finally {
-        terminal.dispose();
-        await cleanupTempPaths(paths);
-      }
-    });
+        try {
+          terminal.show(true);
+
+          // Wait for shell to be ready before sending text
+          await new Promise(resolve => setTimeout(resolve, 1000));
+
+          terminal.sendText(`${variant.command} > "${paths.first}"`, true);
+          await waitForFileText(paths.first, 7000, 'first sendText');
+
+          terminal.sendText(`${variant.command} > "${paths.second}"`, true);
+          await assertExpectedOutput(paths, `sendText ${variant.suffix} ${shellName}`, terminal, variant.validate);
+        } finally {
+          terminal.dispose();
+          await cleanupTempPaths(paths);
+        }
+      });
+    }
   }
 });
