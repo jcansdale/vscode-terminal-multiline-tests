@@ -6,6 +6,7 @@ const path = require('node:path');
 const vscode = require('vscode');
 
 const LINE_COUNT = 19;
+const PAYLOAD_COUNT = 10;
 const EXPECTED_LINES = [];
 for (let i = 1; i <= LINE_COUNT; i++) {
   EXPECTED_LINES.push(`L${String(i).padStart(2, '0')} ${'a'.repeat(51)}`);
@@ -16,38 +17,18 @@ const EXPECTED_BYTE_COUNT = EXPECTED_LINES.join('\n').length + 1;
 
 const ECHO_BODY = `echo '${EXPECTED_LINES.join('\n')}'`;
 
-const commandVariants = [
-  {
-    suffix: '| wc -c',
-    command: `${ECHO_BODY} | wc -c`,
-    validate(content, label) {
-      const actual = parseInt(content.trim(), 10);
-      if (isNaN(actual)) {
-        return `${label}: expected a number, got ${JSON.stringify(content.trim())}`;
-      }
-      if (actual !== EXPECTED_BYTE_COUNT) {
-        return `${label}: expected ${EXPECTED_BYTE_COUNT} bytes, got ${actual}`;
-      }
-      return null;
-    },
-  },
-  {
-    suffix: '>',
-    command: ECHO_BODY,
-    validate(content, label) {
-      const actualLines = content.trimEnd().split('\n');
-      if (actualLines.length !== EXPECTED_LINES.length) {
-        return `${label}: expected ${EXPECTED_LINES.length} lines, got ${actualLines.length}`;
-      }
-      for (let i = 0; i < EXPECTED_LINES.length; i++) {
-        if (actualLines[i] !== EXPECTED_LINES[i]) {
-          return `${label}: line ${i + 1} differs:\n  expected: ${JSON.stringify(EXPECTED_LINES[i])}\n  actual:   ${JSON.stringify(actualLines[i])}`;
-        }
-      }
-      return null;
-    },
-  },
-];
+const COMMAND = `${ECHO_BODY} | wc -c`;
+
+function validateByteCount(content, label) {
+  const actual = parseInt(content.trim(), 10);
+  if (isNaN(actual)) {
+    return `${label}: expected a number, got ${JSON.stringify(content.trim())}`;
+  }
+  if (actual !== EXPECTED_BYTE_COUNT) {
+    return `${label}: expected ${EXPECTED_BYTE_COUNT} bytes, got ${actual}`;
+  }
+  return null;
+}
 
 const shellMatrix = [
   { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'] },
@@ -111,11 +92,11 @@ async function getTerminalContents(terminal) {
 
 async function createTempPaths() {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vscode-terminal-repro-'));
-  return {
-    tempDir,
-    first: path.join(tempDir, 'first.txt'),
-    second: path.join(tempDir, 'second.txt'),
-  };
+  const files = [];
+  for (let i = 1; i <= PAYLOAD_COUNT; i++) {
+    files.push(path.join(tempDir, `output-${i}.txt`));
+  }
+  return { tempDir, files };
 }
 
 async function cleanupTempPaths(paths) {
@@ -130,21 +111,23 @@ function createTerminal(name, shell) {
   });
 }
 
-async function assertExpectedOutput(paths, name, terminal, validate) {
-  let firstOutput, secondOutput;
-  try {
-    firstOutput = await waitForFileText(paths.first, 7000, `first ${name}`);
-  } catch (e) {
-    firstOutput = '<timed out>';
-  }
-  try {
-    secondOutput = await waitForFileText(paths.second, 7000, `second ${name}`);
-  } catch (e) {
-    secondOutput = '<timed out>';
+async function assertExpectedOutput(paths, name, terminal) {
+  const outputs = [];
+  for (let i = 0; i < paths.files.length; i++) {
+    try {
+      outputs.push(await waitForFileText(paths.files[i], 7000, `#${i + 1} ${name}`));
+    } catch (e) {
+      outputs.push('<timed out>');
+    }
   }
 
-  const firstError = firstOutput === '<timed out>' ? 'first: timed out' : validate(firstOutput, 'first');
-  const secondError = secondOutput === '<timed out>' ? 'second: timed out' : validate(secondOutput, 'second');
+  const errors = outputs.map((output, i) => {
+    const label = `#${i + 1}`;
+    if (output === '<timed out>') {
+      return `${label}: timed out`;
+    }
+    return validateByteCount(output, label);
+  });
 
   let terminalText;
   try {
@@ -153,19 +136,12 @@ async function assertExpectedOutput(paths, name, terminal, validate) {
     terminalText = `<failed to capture: ${e.message}>`;
   }
 
-  const details = [
-    `--- first output ---`,
-    firstError || 'OK (all lines match)',
-    `--- second output ---`,
-    secondError || 'OK (all lines match)',
-    `--- terminal contents ---`,
-    terminalText,
-  ].join('\n');
+  const details = errors.map((err, i) => `--- #${i + 1} ---\n${err || 'OK'}`).join('\n');
+  console.log(`${name}:\n${details}\n--- terminal contents ---\n${terminalText}`);
 
-  console.log(`${name}:\n${details}`);
-
-  if (firstError || secondError) {
-    assert.fail(`${name} failed:\n${details}`);
+  const failed = errors.filter(e => e !== null);
+  if (failed.length > 0) {
+    assert.fail(`${name} failed (${failed.length}/${PAYLOAD_COUNT}):\n${details}\n--- terminal contents ---\n${terminalText}`);
   }
 }
 
@@ -173,60 +149,62 @@ suite('Multiline terminal repro', () => {
   for (const shell of shellMatrix) {
     const shellName = path.basename(shell.shellPath);
 
-    for (const variant of commandVariants) {
-      test(`executeCommand twice ${variant.suffix} (${shellName})`, async function () {
-        if (!fsSync.existsSync(shell.shellPath)) {
+    test(`executeCommand ${PAYLOAD_COUNT}x (${shellName})`, async function () {
+      if (!fsSync.existsSync(shell.shellPath)) {
+        this.skip();
+      }
+      this.timeout(20000 + PAYLOAD_COUNT * 8000);
+
+      const paths = await createTempPaths();
+      const terminal = createTerminal(`executeCommand ${shellName}`, shell);
+
+      try {
+        terminal.show(true);
+
+        const shellIntegration = await waitForShellIntegration(terminal, 3000);
+        if (!shellIntegration) {
           this.skip();
         }
-        this.timeout(20000);
 
-        const paths = await createTempPaths();
-        const terminal = createTerminal(`executeCommand ${variant.suffix} ${shellName}`, shell);
-
-        try {
-          terminal.show(true);
-
-          const shellIntegration = await waitForShellIntegration(terminal, 3000);
-          if (!shellIntegration) {
-            this.skip();
+        for (let i = 0; i < PAYLOAD_COUNT; i++) {
+          shellIntegration.executeCommand(`${COMMAND} > "${paths.files[i]}"`);
+          if (i < PAYLOAD_COUNT - 1) {
+            await waitForFileText(paths.files[i], 7000, `#${i + 1} executeCommand`);
           }
-
-          shellIntegration.executeCommand(`${variant.command} > "${paths.first}"`);
-          await waitForFileText(paths.first, 7000, 'first executeCommand');
-
-          shellIntegration.executeCommand(`${variant.command} > "${paths.second}"`);
-          await assertExpectedOutput(paths, `executeCommand ${variant.suffix} ${shellName}`, terminal, variant.validate);
-        } finally {
-          terminal.dispose();
-          await cleanupTempPaths(paths);
         }
-      });
+        await assertExpectedOutput(paths, `executeCommand ${shellName}`, terminal);
+      } finally {
+        terminal.dispose();
+        await cleanupTempPaths(paths);
+      }
+    });
 
-      test(`sendText twice ${variant.suffix} (${shellName})`, async function () {
-        if (!fsSync.existsSync(shell.shellPath)) {
-          this.skip();
+    test(`sendText ${PAYLOAD_COUNT}x (${shellName})`, async function () {
+      if (!fsSync.existsSync(shell.shellPath)) {
+        this.skip();
+      }
+      this.timeout(20000 + PAYLOAD_COUNT * 8000);
+
+      const paths = await createTempPaths();
+      const terminal = createTerminal(`sendText ${shellName}`, shell);
+
+      try {
+        terminal.show(true);
+
+        // Wait for shell to be ready before sending text
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        for (let i = 0; i < PAYLOAD_COUNT; i++) {
+          terminal.sendText(`${COMMAND} > "${paths.files[i]}"`, true);
+          if (i < PAYLOAD_COUNT - 1) {
+            await waitForFileText(paths.files[i], 7000, `#${i + 1} sendText`);
+          }
         }
-        this.timeout(20000);
-
-        const paths = await createTempPaths();
-        const terminal = createTerminal(`sendText ${variant.suffix} ${shellName}`, shell);
-
-        try {
-          terminal.show(true);
-
-          // Wait for shell to be ready before sending text
-          await new Promise(resolve => setTimeout(resolve, 1000));
-
-          terminal.sendText(`${variant.command} > "${paths.first}"`, true);
-          await waitForFileText(paths.first, 7000, 'first sendText');
-
-          terminal.sendText(`${variant.command} > "${paths.second}"`, true);
-          await assertExpectedOutput(paths, `sendText ${variant.suffix} ${shellName}`, terminal, variant.validate);
-        } finally {
-          terminal.dispose();
-          await cleanupTempPaths(paths);
-        }
-      });
-    }
+        await assertExpectedOutput(paths, `sendText ${shellName}`, terminal);
+      } finally {
+        terminal.dispose();
+        await cleanupTempPaths(paths);
+      }
+    });
   }
 });
