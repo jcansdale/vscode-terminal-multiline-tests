@@ -30,9 +30,9 @@ function validateByteCount(content, label) {
 }
 
 const shellMatrix = [
-  { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'] },
-  { shellPath: '/bin/zsh', shellArgs: ['-f', '-i'] },
-  { shellPath: '/bin/dash', shellArgs: ['-i'] },
+  { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'], defaultArgs: [] },
+  { shellPath: '/bin/zsh', shellArgs: ['-f', '-i'], defaultArgs: [] },
+  { shellPath: '/bin/dash', shellArgs: ['-i'], defaultArgs: ['-i'] },
 ];
 
 async function waitForShellIntegration(terminal, timeoutMs) {
@@ -102,11 +102,11 @@ async function cleanupTempPaths(paths) {
   await fs.rm(paths.tempDir, { recursive: true, force: true });
 }
 
-function createTerminal(name, shell) {
+function createTerminal(name, shellPath, shellArgs) {
   return vscode.window.createTerminal({
     name,
-    shellPath: shell.shellPath,
-    shellArgs: shell.shellArgs,
+    shellPath,
+    shellArgs,
   });
 }
 
@@ -160,12 +160,12 @@ suite('Multiline terminal repro', () => {
       this.timeout(20000);
 
       const paths = await createTempPaths();
-      const terminal = createTerminal(`executeCommand ${shellName}`, shell);
+      const terminal = createTerminal(`executeCommand ${shellName}`, shell.shellPath, shell.defaultArgs);
 
       try {
         terminal.show(true);
 
-        const shellIntegration = await waitForShellIntegration(terminal, 3000);
+        const shellIntegration = await waitForShellIntegration(terminal, 5000);
         if (!shellIntegration) {
           this.skip();
         }
@@ -188,7 +188,7 @@ suite('Multiline terminal repro', () => {
       this.timeout(20000);
 
       const paths = await createTempPaths();
-      const terminal = createTerminal(`sendText ${shellName}`, shell);
+      const terminal = createTerminal(`sendText ${shellName}`, shell.shellPath, shell.shellArgs);
 
       try {
         terminal.show(true);
