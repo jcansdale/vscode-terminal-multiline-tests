@@ -1,0 +1,26 @@
+{
+  "name": "vscode-terminal-multiline-tests",
+  "displayName": "VS Code Terminal Multiline Tests",
+  "description": "Integration tests reproducing multiline command issues in the VS Code terminal",
+  "version": "0.0.1",
+  "publisher": "jcansdale",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jcansdale/vscode-terminal-multiline-tests"
+  },
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "*"
+  ],
+  "scripts": {
+    "test": "node ./test/runTest.js"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "^2.5.2",
+    "mocha": "^11.2.2"
+  }
+}
