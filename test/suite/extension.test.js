@@ -11,7 +11,10 @@ for (let i = 1; i <= LINE_COUNT; i++) {
   EXPECTED_LINES.push(`L${String(i).padStart(2, '0')} ${'a'.repeat(51)}`);
 }
 
-const COMMAND = `echo '${EXPECTED_LINES.join('\n')}'`;
+// Total bytes: 19 lines × 55 chars + 18 newlines between lines + 1 trailing newline from echo = 1064
+const EXPECTED_BYTE_COUNT = EXPECTED_LINES.join('\n').length + 1;
+
+const COMMAND = `echo '${EXPECTED_LINES.join('\n')}' | wc -c`;
 
 const shellMatrix = [
   { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'] },
@@ -24,14 +27,12 @@ function withRedirect(outputFilePath) {
 }
 
 function validateOutput(content, label) {
-  const actualLines = content.trimEnd().split('\n');
-  if (actualLines.length !== EXPECTED_LINES.length) {
-    return `${label}: expected ${EXPECTED_LINES.length} lines, got ${actualLines.length}`;
+  const actual = parseInt(content.trim(), 10);
+  if (isNaN(actual)) {
+    return `${label}: expected a number, got ${JSON.stringify(content.trim())}`;
   }
-  for (let i = 0; i < EXPECTED_LINES.length; i++) {
-    if (actualLines[i] !== EXPECTED_LINES[i]) {
-      return `${label}: line ${i + 1} differs:\n  expected: ${JSON.stringify(EXPECTED_LINES[i])}\n  actual:   ${JSON.stringify(actualLines[i])}`;
-    }
+  if (actual !== EXPECTED_BYTE_COUNT) {
+    return `${label}: expected ${EXPECTED_BYTE_COUNT} bytes, got ${actual}`;
   }
   return null;
 }
