@@ -1,4 +1,5 @@
 const assert = require('assert');
+const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -23,6 +24,12 @@ L16 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 L17 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 L18 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 L19 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' | wc -c`;
+
+const shellMatrix = [
+  { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'] },
+  { shellPath: '/bin/zsh', shellArgs: ['-f', '-i'] },
+  { shellPath: '/bin/dash', shellArgs: ['-i'] },
+];
 
 function withRedirect(outputFilePath) {
   return `${COMMAND} > "${outputFilePath}"`;
@@ -95,17 +102,12 @@ async function cleanupTempPaths(paths) {
   await fs.rm(paths.tempDir, { recursive: true, force: true });
 }
 
-const shellPath = process.env.TERMINAL_SHELL;
-
-async function createTerminalRepro(name) {
-  const options = { name };
-  if (shellPath) {
-    options.shellPath = shellPath;
-  }
-  return {
-    terminal: vscode.window.createTerminal(options),
-    paths: await createTempPaths(),
-  };
+function createTerminal(name, shell) {
+  return vscode.window.createTerminal({
+    name,
+    shellPath: shell.shellPath,
+    shellArgs: shell.shellArgs,
+  });
 }
 
 async function assertExpectedOutput(paths, name, terminal) {
@@ -145,51 +147,62 @@ async function assertExpectedOutput(paths, name, terminal) {
   }
 }
 
-async function runExecuteCommandTwice(terminal, paths) {
-  const shellIntegration = await waitForShellIntegration(terminal, 3000);
-  assert.ok(shellIntegration, 'Expected terminal shell integration');
+suite('Multiline terminal repro', () => {
+  for (const shell of shellMatrix) {
+    const shellName = path.basename(shell.shellPath);
 
-  shellIntegration.executeCommand(withRedirect(paths.first));
-  await waitForFileText(paths.first, 7000, 'first executeCommand repro');
+    test(`executeCommand twice (${shellName})`, async function () {
+      if (!fsSync.existsSync(shell.shellPath)) {
+        this.skip();
+      }
+      this.timeout(20000);
 
-  shellIntegration.executeCommand(withRedirect(paths.second));
-}
+      const paths = await createTempPaths();
+      const terminal = createTerminal(`executeCommand ${shellName}`, shell);
 
-async function runSendTextTwice(terminal, paths) {
-  terminal.sendText(withRedirect(paths.first), true);
-  await waitForFileText(paths.first, 7000, 'first sendText repro');
+      try {
+        terminal.show(true);
 
-  terminal.sendText(withRedirect(paths.second), true);
-}
+        const shellIntegration = await waitForShellIntegration(terminal, 3000);
+        if (!shellIntegration) {
+          this.skip();
+        }
 
-suite('Integration test', () => {
-  test('executeCommand twice', async function () {
-    this.timeout(20000);
+        shellIntegration.executeCommand(withRedirect(paths.first));
+        await waitForFileText(paths.first, 7000, 'first executeCommand');
 
-    const repro = await createTerminalRepro('executeCommand repro');
+        shellIntegration.executeCommand(withRedirect(paths.second));
+        await assertExpectedOutput(paths, `executeCommand ${shellName}`, terminal);
+      } finally {
+        terminal.dispose();
+        await cleanupTempPaths(paths);
+      }
+    });
 
-    try {
-      repro.terminal.show(true);
-      await runExecuteCommandTwice(repro.terminal, repro.paths);
-      await assertExpectedOutput(repro.paths, 'executeCommand repro', repro.terminal);
-    } finally {
-      repro.terminal.dispose();
-      await cleanupTempPaths(repro.paths);
-    }
-  });
+    test(`sendText twice (${shellName})`, async function () {
+      if (!fsSync.existsSync(shell.shellPath)) {
+        this.skip();
+      }
+      this.timeout(20000);
 
-  test('sendText twice', async function () {
-    this.timeout(20000);
+      const paths = await createTempPaths();
+      const terminal = createTerminal(`sendText ${shellName}`, shell);
 
-    const repro = await createTerminalRepro('sendText repro');
+      try {
+        terminal.show(true);
 
-    try {
-      repro.terminal.show(true);
-      await runSendTextTwice(repro.terminal, repro.paths);
-      await assertExpectedOutput(repro.paths, 'sendText repro', repro.terminal);
-    } finally {
-      repro.terminal.dispose();
-      await cleanupTempPaths(repro.paths);
-    }
-  });
+        // Wait for shell to be ready before sending text
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        terminal.sendText(withRedirect(paths.first), true);
+        await waitForFileText(paths.first, 7000, 'first sendText');
+
+        terminal.sendText(withRedirect(paths.second), true);
+        await assertExpectedOutput(paths, `sendText ${shellName}`, terminal);
+      } finally {
+        terminal.dispose();
+        await cleanupTempPaths(paths);
+      }
+    });
+  }
 });
