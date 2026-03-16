@@ -5,9 +5,12 @@ async function main() {
   try {
     // Use local Code OSS build if VSCODE_PATH is set
     const vscodeExecutablePath = process.env.VSCODE_PATH;
+    // Use VSCODE_VERSION to select stable/insiders (default: stable)
+    const version = process.env.VSCODE_VERSION || 'stable';
 
     await runTests({
       vscodeExecutablePath,
+      version,
       extensionDevelopmentPath: path.resolve(__dirname, '..'),
       extensionTestsPath: path.resolve(__dirname, 'suite', 'index.js'),
     });
