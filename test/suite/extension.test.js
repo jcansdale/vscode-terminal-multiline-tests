@@ -172,6 +172,9 @@ suite('Multiline terminal repro', () => {
             content = '<timed out>';
           }
           outputs.push({ label: `#${i}`, content });
+          if (content === '<timed out>') {
+            break;
+          }
         }
         await assertExpectedOutput(outputs, `executeCommand ${shellName}`, terminal);
       } finally {
@@ -206,6 +209,9 @@ suite('Multiline terminal repro', () => {
             content = '<timed out>';
           }
           outputs.push({ label: `#${i}`, content });
+          if (content === '<timed out>') {
+            break;
+          }
         }
         await assertExpectedOutput(outputs, `sendText ${shellName}`, terminal);
       } finally {
