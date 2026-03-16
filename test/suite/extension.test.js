@@ -5,25 +5,13 @@ const os = require('node:os');
 const path = require('node:path');
 const vscode = require('vscode');
 
-const COMMAND = `echo 'L01 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L02 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L03 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L04 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L05 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L06 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L07 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L08 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L09 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L10 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L11 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L12 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L13 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L14 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L15 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L16 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L17 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L18 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-L19 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' | wc -c`;
+const LINE_COUNT = 19;
+const EXPECTED_LINES = [];
+for (let i = 1; i <= LINE_COUNT; i++) {
+  EXPECTED_LINES.push(`L${String(i).padStart(2, '0')} ${'a'.repeat(51)}`);
+}
+
+const COMMAND = `echo '${EXPECTED_LINES.join('\n')}'`;
 
 const shellMatrix = [
   { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'] },
@@ -33,6 +21,19 @@ const shellMatrix = [
 
 function withRedirect(outputFilePath) {
   return `${COMMAND} > "${outputFilePath}"`;
+}
+
+function validateOutput(content, label) {
+  const actualLines = content.trimEnd().split('\n');
+  if (actualLines.length !== EXPECTED_LINES.length) {
+    return `${label}: expected ${EXPECTED_LINES.length} lines, got ${actualLines.length}`;
+  }
+  for (let i = 0; i < EXPECTED_LINES.length; i++) {
+    if (actualLines[i] !== EXPECTED_LINES[i]) {
+      return `${label}: line ${i + 1} differs:\n  expected: ${JSON.stringify(EXPECTED_LINES[i])}\n  actual:   ${JSON.stringify(actualLines[i])}`;
+    }
+  }
+  return null;
 }
 
 async function waitForShellIntegration(terminal, timeoutMs) {
@@ -123,26 +124,28 @@ async function assertExpectedOutput(paths, name, terminal) {
     secondOutput = '<timed out>';
   }
 
-  const firstOk = firstOutput.includes('1064');
-  const secondOk = secondOutput.includes('1064');
+  const firstError = firstOutput === '<timed out>' ? 'first: timed out' : validateOutput(firstOutput, 'first');
+  const secondError = secondOutput === '<timed out>' ? 'second: timed out' : validateOutput(secondOutput, 'second');
 
-  if (!firstOk || !secondOk) {
-    let terminalText;
-    try {
-      terminalText = await getTerminalContents(terminal);
-    } catch (e) {
-      terminalText = `<failed to capture: ${e.message}>`;
-    }
+  let terminalText;
+  try {
+    terminalText = await getTerminalContents(terminal);
+  } catch (e) {
+    terminalText = `<failed to capture: ${e.message}>`;
+  }
 
-    const details = [
-      `--- first output (expected "1064") ---`,
-      firstOutput.trim(),
-      `--- second output (expected "1064") ---`,
-      secondOutput.trim(),
-      `--- terminal contents ---`,
-      terminalText,
-    ].join('\n');
+  const details = [
+    `--- first output ---`,
+    firstError || 'OK (all lines match)',
+    `--- second output ---`,
+    secondError || 'OK (all lines match)',
+    `--- terminal contents ---`,
+    terminalText,
+  ].join('\n');
 
+  console.log(`${name}:\n${details}`);
+
+  if (firstError || secondError) {
     assert.fail(`${name} failed:\n${details}`);
   }
 }
