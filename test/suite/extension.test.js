@@ -70,6 +70,18 @@ async function waitForFileText(filePath, timeoutMs, label) {
   throw new Error(`Timed out waiting ${timeoutMs}ms for ${label} output file`);
 }
 
+async function getTerminalContents(terminal) {
+  // Select all terminal text, read it from the clipboard, then restore
+  const previousClipboard = await vscode.env.clipboard.readText();
+  await vscode.window.showTerminalPanel?.(terminal) ?? terminal.show(true);
+  await vscode.commands.executeCommand('workbench.action.terminal.selectAll');
+  await vscode.commands.executeCommand('workbench.action.terminal.copySelection');
+  await vscode.commands.executeCommand('workbench.action.terminal.clearSelection');
+  const contents = await vscode.env.clipboard.readText();
+  await vscode.env.clipboard.writeText(previousClipboard);
+  return contents;
+}
+
 async function createTempPaths() {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vscode-terminal-repro-'));
   return {
@@ -90,12 +102,41 @@ async function createTerminalRepro(name) {
   };
 }
 
-async function assertExpectedOutput(paths, name) {
-  const firstOutput = await waitForFileText(paths.first, 7000, `first ${name}`);
-  const secondOutput = await waitForFileText(paths.second, 7000, `second ${name}`);
+async function assertExpectedOutput(paths, name, terminal) {
+  let firstOutput, secondOutput;
+  try {
+    firstOutput = await waitForFileText(paths.first, 7000, `first ${name}`);
+  } catch (e) {
+    firstOutput = '<timed out>';
+  }
+  try {
+    secondOutput = await waitForFileText(paths.second, 7000, `second ${name}`);
+  } catch (e) {
+    secondOutput = '<timed out>';
+  }
 
-  assert.ok(firstOutput.includes('1064'));
-  assert.ok(secondOutput.includes('1064'));
+  const firstOk = firstOutput.includes('1064');
+  const secondOk = secondOutput.includes('1064');
+
+  if (!firstOk || !secondOk) {
+    let terminalText;
+    try {
+      terminalText = await getTerminalContents(terminal);
+    } catch (e) {
+      terminalText = `<failed to capture: ${e.message}>`;
+    }
+
+    const details = [
+      `--- first output (expected "1064") ---`,
+      firstOutput.trim(),
+      `--- second output (expected "1064") ---`,
+      secondOutput.trim(),
+      `--- terminal contents ---`,
+      terminalText,
+    ].join('\n');
+
+    assert.fail(`${name} failed:\n${details}`);
+  }
 }
 
 async function runExecuteCommandTwice(terminal, paths) {
@@ -124,7 +165,7 @@ suite('Integration test', () => {
     try {
       repro.terminal.show(true);
       await runExecuteCommandTwice(repro.terminal, repro.paths);
-      await assertExpectedOutput(repro.paths, 'executeCommand repro');
+      await assertExpectedOutput(repro.paths, 'executeCommand repro', repro.terminal);
     } finally {
       repro.terminal.dispose();
       await cleanupTempPaths(repro.paths);
@@ -139,7 +180,7 @@ suite('Integration test', () => {
     try {
       repro.terminal.show(true);
       await runSendTextTwice(repro.terminal, repro.paths);
-      await assertExpectedOutput(repro.paths, 'sendText repro');
+      await assertExpectedOutput(repro.paths, 'sendText repro', repro.terminal);
     } finally {
       repro.terminal.dispose();
       await cleanupTempPaths(repro.paths);
