@@ -95,9 +95,15 @@ async function cleanupTempPaths(paths) {
   await fs.rm(paths.tempDir, { recursive: true, force: true });
 }
 
+const shellPath = process.env.TERMINAL_SHELL;
+
 async function createTerminalRepro(name) {
+  const options = { name };
+  if (shellPath) {
+    options.shellPath = shellPath;
+  }
   return {
-    terminal: vscode.window.createTerminal(name),
+    terminal: vscode.window.createTerminal(options),
     paths: await createTempPaths(),
   };
 }
