@@ -89,17 +89,14 @@ async function getTerminalContents(terminal) {
   return contents;
 }
 
-async function createTempPaths() {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vscode-terminal-repro-'));
-  return {
-    tempDir,
-    first: path.join(tempDir, 'first.txt'),
-    second: path.join(tempDir, 'second.txt'),
-  };
+const SEND_COUNT = 5;
+
+async function createTempDir() {
+  return await fs.mkdtemp(path.join(os.tmpdir(), 'vscode-terminal-repro-'));
 }
 
-async function cleanupTempPaths(paths) {
-  await fs.rm(paths.tempDir, { recursive: true, force: true });
+async function cleanupTempDir(tempDir) {
+  await fs.rm(tempDir, { recursive: true, force: true });
 }
 
 function createTerminal(name, shellPath, shellArgs) {
@@ -110,21 +107,18 @@ function createTerminal(name, shellPath, shellArgs) {
   });
 }
 
-async function assertExpectedOutput(paths, name, terminal) {
-  let firstOutput, secondOutput;
-  try {
-    firstOutput = await waitForFileText(paths.first, 7000, `first ${name}`);
-  } catch (e) {
-    firstOutput = '<timed out>';
+async function assertExpectedOutput(outputs, name, terminal) {
+  const errors = [];
+  for (const { label, content } of outputs) {
+    if (content === '<timed out>') {
+      errors.push(`${label}: timed out`);
+    } else {
+      const err = validateByteCount(content, label);
+      if (err) {
+        errors.push(err);
+      }
+    }
   }
-  try {
-    secondOutput = await waitForFileText(paths.second, 7000, `second ${name}`);
-  } catch (e) {
-    secondOutput = '<timed out>';
-  }
-
-  const firstError = firstOutput === '<timed out>' ? 'first: timed out' : validateByteCount(firstOutput, 'first');
-  const secondError = secondOutput === '<timed out>' ? 'second: timed out' : validateByteCount(secondOutput, 'second');
 
   let terminalText;
   try {
@@ -134,18 +128,15 @@ async function assertExpectedOutput(paths, name, terminal) {
   }
 
   const details = [
-    `--- first output ---`,
-    firstError || 'OK (all lines match)',
-    `--- second output ---`,
-    secondError || 'OK (all lines match)',
+    ...outputs.map(o => `--- ${o.label} ---\n${errors.find(e => e.startsWith(o.label)) || 'OK'}`),
     `--- terminal contents ---`,
     terminalText,
   ].join('\n');
 
   console.log(`${name}:\n${details}`);
 
-  if (firstError || secondError) {
-    assert.fail(`${name} failed:\n${details}`);
+  if (errors.length > 0) {
+    assert.fail(`${name} failed (${errors.length}/${outputs.length}):\n${details}`);
   }
 }
 
@@ -153,13 +144,13 @@ suite('Multiline terminal repro', () => {
   for (const shell of shellMatrix) {
     const shellName = path.basename(shell.shellPath);
 
-    test(`executeCommand twice (${shellName})`, async function () {
+    test(`executeCommand ${SEND_COUNT}x (${shellName})`, async function () {
       if (!fsSync.existsSync(shell.shellPath)) {
         this.skip();
       }
       this.timeout(20000);
 
-      const paths = await createTempPaths();
+      const tempDir = await createTempDir();
       const terminal = createTerminal(`executeCommand ${shellName}`, shell.shellPath, shell.defaultArgs);
 
       try {
@@ -170,24 +161,32 @@ suite('Multiline terminal repro', () => {
           this.skip();
         }
 
-        shellIntegration.executeCommand(`${COMMAND} > "${paths.first}"`);
-        await waitForFileText(paths.first, 7000, 'first executeCommand');
-
-        shellIntegration.executeCommand(`${COMMAND} > "${paths.second}"`);
-        await assertExpectedOutput(paths, `executeCommand ${shellName}`, terminal);
+        const outputs = [];
+        for (let i = 1; i <= SEND_COUNT; i++) {
+          const filePath = path.join(tempDir, `output-${i}.txt`);
+          shellIntegration.executeCommand(`${COMMAND} > "${filePath}"`);
+          let content;
+          try {
+            content = await waitForFileText(filePath, 7000, `#${i} executeCommand`);
+          } catch (e) {
+            content = '<timed out>';
+          }
+          outputs.push({ label: `#${i}`, content });
+        }
+        await assertExpectedOutput(outputs, `executeCommand ${shellName}`, terminal);
       } finally {
         terminal.dispose();
-        await cleanupTempPaths(paths);
+        await cleanupTempDir(tempDir);
       }
     });
 
-    test(`sendText twice (${shellName})`, async function () {
+    test(`sendText ${SEND_COUNT}x (${shellName})`, async function () {
       if (!fsSync.existsSync(shell.shellPath)) {
         this.skip();
       }
       this.timeout(20000);
 
-      const paths = await createTempPaths();
+      const tempDir = await createTempDir();
       const terminal = createTerminal(`sendText ${shellName}`, shell.shellPath, shell.shellArgs);
 
       try {
@@ -196,14 +195,22 @@ suite('Multiline terminal repro', () => {
         // Wait for shell to be ready before sending text
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        terminal.sendText(`${COMMAND} > "${paths.first}"`, true);
-        await waitForFileText(paths.first, 7000, 'first sendText');
-
-        terminal.sendText(`${COMMAND} > "${paths.second}"`, true);
-        await assertExpectedOutput(paths, `sendText ${shellName}`, terminal);
+        const outputs = [];
+        for (let i = 1; i <= SEND_COUNT; i++) {
+          const filePath = path.join(tempDir, `output-${i}.txt`);
+          terminal.sendText(`${COMMAND} > "${filePath}"`, true);
+          let content;
+          try {
+            content = await waitForFileText(filePath, 7000, `#${i} sendText`);
+          } catch (e) {
+            content = '<timed out>';
+          }
+          outputs.push({ label: `#${i}`, content });
+        }
+        await assertExpectedOutput(outputs, `sendText ${shellName}`, terminal);
       } finally {
         terminal.dispose();
-        await cleanupTempPaths(paths);
+        await cleanupTempDir(tempDir);
       }
     });
   }
