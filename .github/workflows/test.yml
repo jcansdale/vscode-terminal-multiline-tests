@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    permissions:
+      checks: write
+      pull-requests: write
     strategy:
       fail-fast: false
       matrix:
@@ -34,3 +37,11 @@ jobs:
         run: npm test
         env:
           VSCODE_VERSION: ${{ matrix.vscode-version }}
+      - name: Report test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results (${{ matrix.os }} / VS Code ${{ matrix.vscode-version }})
+          path: test-results.xml
+          reporter: java-junit
+          fail-on-error: false
