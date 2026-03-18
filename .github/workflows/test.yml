@@ -60,11 +60,34 @@ jobs:
           ref: refs/pull/302526/head
           path: vscode-src
 
-      - name: Build VS Code from source
+      - name: Setup Node.js for VS Code build
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: vscode-src/.nvmrc
+
+      - name: Install VS Code dependencies
         working-directory: vscode-src
         run: |
-          yarn --frozen-lockfile --network-timeout 180000
-          yarn compile
+          for i in {1..5}; do
+            npm ci && break
+            if [ $i -eq 5 ]; then
+              echo "npm ci failed too many times" >&2
+              exit 1
+            fi
+            echo "npm ci failed $i, trying again..."
+          done
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compile VS Code
+        working-directory: vscode-src
+        run: npm run compile
+
+      - name: Download Electron
+        working-directory: vscode-src
+        run: npx gulp electron
 
       - name: Find Electron binary
         id: electron
