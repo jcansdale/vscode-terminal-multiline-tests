@@ -75,10 +75,33 @@ async function waitForCommandCompletion(terminal, timeoutMs = 5000) {
 
 function getShellIntegrationTimeout(shellPath) {
   if (process.platform === 'darwin' && shellPath === '/bin/zsh') {
-    return 10000;
+    return 20000;
   }
 
   return 5000;
+}
+
+async function getShellIntegrationWithWarmup(terminal, shellPath) {
+  const timeoutMs = getShellIntegrationTimeout(shellPath);
+
+  let shellIntegration = await waitForShellIntegration(terminal, timeoutMs);
+  if (shellIntegration) {
+    return shellIntegration;
+  }
+
+  if (process.platform === 'darwin' && shellPath === '/bin/zsh') {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      terminal.sendText('echo ready', true);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      shellIntegration = terminal.shellIntegration || await waitForShellIntegration(terminal, 5000);
+      if (shellIntegration) {
+        return shellIntegration;
+      }
+      console.log(`zsh shell integration still unavailable after warm-up attempt ${attempt}`);
+    }
+  }
+
+  return undefined;
 }
 
 async function waitForFileText(filePath, timeoutMs, label) {
@@ -190,13 +213,7 @@ suite('Multiline terminal repro', () => {
         // Give the shell a moment to start before waiting for integration.
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        let shellIntegration = await waitForShellIntegration(terminal, getShellIntegrationTimeout(shell.shellPath));
-        if (!shellIntegration) {
-          // A trivial warm-up command helps zsh on macOS finish initializing shell integration.
-          terminal.sendText('echo ready', true);
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          shellIntegration = terminal.shellIntegration || await waitForShellIntegration(terminal, 3000);
-        }
+        const shellIntegration = await getShellIntegrationWithWarmup(terminal, shell.shellPath);
 
         if (!shellIntegration) {
           console.log(`Skipping executeCommand ${count}x (${shellName}): shell integration unavailable`);
