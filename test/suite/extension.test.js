@@ -43,6 +43,58 @@ const shellMatrix = [
   { shellPath: '/bin/zsh', shellArgs: ['-i'] },
 ];
 
+function getVsCodeAppRoot() {
+  if (process.resourcesPath) {
+    return path.join(process.resourcesPath, 'app');
+  }
+
+  return path.resolve(process.execPath, '..', 'resources', 'app');
+}
+
+function getShellIntegrationScriptPath(shellPath) {
+  const shellName = path.basename(shellPath);
+  const scriptsDir = path.join(getVsCodeAppRoot(), 'out', 'vs', 'workbench', 'contrib', 'terminal', 'common', 'scripts');
+
+  if (shellName === 'bash') {
+    return path.join(scriptsDir, 'shellIntegration-bash.sh');
+  }
+
+  if (shellName === 'zsh') {
+    return path.join(scriptsDir, 'shellIntegration-rc.zsh');
+  }
+
+  throw new Error(`Unsupported shell for manual integration: ${shellPath}`);
+}
+
+async function createManualShellEnv(shellPath) {
+  const shellName = path.basename(shellPath);
+  const shellHome = await fs.mkdtemp(path.join(os.tmpdir(), `vscode-shell-home-${shellName}-`));
+  const scriptPath = getShellIntegrationScriptPath(shellPath);
+
+  if (!fsSync.existsSync(scriptPath)) {
+    throw new Error(`Shell integration script not found: ${scriptPath}`);
+  }
+
+  if (shellName === 'bash') {
+    await fs.writeFile(path.join(shellHome, '.bashrc'), `. "${scriptPath}"\n`, 'utf8');
+    return { shellHome, env: { HOME: shellHome } };
+  }
+
+  if (shellName === 'zsh') {
+    await fs.writeFile(path.join(shellHome, '.zshrc'), `. "${scriptPath}"\n`, 'utf8');
+    return {
+      shellHome,
+      env: {
+        HOME: shellHome,
+        ZDOTDIR: shellHome,
+        USER_ZDOTDIR: shellHome,
+      },
+    };
+  }
+
+  throw new Error(`Unsupported shell for manual integration: ${shellPath}`);
+}
+
 async function waitForShellIntegration(terminal, timeoutMs) {
   if (terminal.shellIntegration) {
     return terminal.shellIntegration;
@@ -185,11 +237,12 @@ async function cleanupTempDir(tempDir) {
   await fs.rm(tempDir, { recursive: true, force: true });
 }
 
-function createTerminal(name, shellPath, shellArgs) {
+function createTerminal(name, shellPath, shellArgs, env) {
   return vscode.window.createTerminal({
     name,
     shellPath,
     shellArgs,
+    env,
   });
 }
 
@@ -199,7 +252,8 @@ async function warmupShellIntegration(shell) {
   }
 
   const shellName = path.basename(shell.shellPath);
-  const terminal = createTerminal(`shellIntegration warmup ${shellName}`, shell.shellPath, shell.shellArgs);
+  const { env, shellHome } = await createManualShellEnv(shell.shellPath);
+  const terminal = createTerminal(`shellIntegration warmup ${shellName} manual`, shell.shellPath, shell.shellArgs, env);
 
   try {
     terminal.show(true);
@@ -209,6 +263,7 @@ async function warmupShellIntegration(shell) {
     console.log(`shell integration warmup (${shellName}): ${shellIntegration ? 'ready' : 'unavailable'}`);
   } finally {
     terminal.dispose();
+    await cleanupTempDir(shellHome);
   }
 }
 
@@ -258,7 +313,7 @@ suite('Multiline terminal repro', () => {
   });
 
   for (const shell of shellMatrix) {
-    const shellName = path.basename(shell.shellPath);
+    const shellName = `${path.basename(shell.shellPath)} manual`;
 
     for (const { name: payloadName, payload, counts } of PAYLOAD_MATRIX) {
     for (const count of counts) {
@@ -269,7 +324,8 @@ suite('Multiline terminal repro', () => {
       this.timeout(120000);
 
       const tempDir = await createTempDir();
-      const terminal = createTerminal(`executeCommand ${count}x ${shellName}`, shell.shellPath, shell.shellArgs);
+      const { env, shellHome } = await createManualShellEnv(shell.shellPath);
+      const terminal = createTerminal(`executeCommand ${count}x ${shellName}`, shell.shellPath, shell.shellArgs, env);
 
       try {
         terminal.show(true);
@@ -308,6 +364,7 @@ suite('Multiline terminal repro', () => {
       } finally {
         terminal.dispose();
         await cleanupTempDir(tempDir);
+        await cleanupTempDir(shellHome);
       }
     })
 
@@ -318,7 +375,8 @@ suite('Multiline terminal repro', () => {
       this.timeout(120000);
 
       const tempDir = await createTempDir();
-      const terminal = createTerminal(`sendText ${count}x ${shellName}`, shell.shellPath, shell.shellArgs);
+      const { env, shellHome } = await createManualShellEnv(shell.shellPath);
+      const terminal = createTerminal(`sendText ${count}x ${shellName}`, shell.shellPath, shell.shellArgs, env);
 
       try {
         terminal.show(true);
@@ -326,7 +384,7 @@ suite('Multiline terminal repro', () => {
         // Wait for shell to be ready before sending text
         await new Promise(resolve => setTimeout(resolve, 1000));
 
-        const shellIntegration = await waitForShellIntegration(terminal, 3000);
+        const shellIntegration = await getShellIntegrationWithWarmup(terminal, shell.shellPath);
         
         // Warm-up command
         if (shellIntegration) {
@@ -371,6 +429,7 @@ suite('Multiline terminal repro', () => {
       } finally {
         terminal.dispose();
         await cleanupTempDir(tempDir);
+        await cleanupTempDir(shellHome);
       }
     });
     }
