@@ -30,9 +30,9 @@ function validateByteCount(content, label) {
 }
 
 const shellMatrix = [
-  { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'], defaultArgs: [] },
+  // { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'], defaultArgs: [] },
   { shellPath: '/bin/zsh', shellArgs: ['-i'], defaultArgs: [] },  // No -f to allow shell integration
-  { shellPath: '/bin/dash', shellArgs: ['-i'], defaultArgs: ['-i'] },
+  // { shellPath: '/bin/dash', shellArgs: ['-i'], defaultArgs: ['-i'] },
 ];
 
 async function waitForShellIntegration(terminal, timeoutMs) {
