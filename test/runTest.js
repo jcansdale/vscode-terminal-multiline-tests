@@ -15,7 +15,10 @@ async function main() {
       version,
       extensionDevelopmentPath: path.resolve(__dirname, '..'),
       extensionTestsPath: path.resolve(__dirname, 'suite', 'index.js'),
-      ...(vscodeSourceDir ? { launchArgs: [vscodeSourceDir, '--log', 'debug'] } : {}),
+      ...(vscodeSourceDir ? {
+        launchArgs: [vscodeSourceDir, '--log', 'debug'],
+        extensionTestsEnv: { VSCODE_DEV: '1', ELECTRON_ENABLE_LOGGING: '1' },
+      } : {}),
     });
   } catch (error) {
     console.error('Failed to run tests');
