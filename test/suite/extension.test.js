@@ -20,6 +20,7 @@ function createPayload(lineCount) {
 
 const SEND_COUNT = 5;  // Run 5x to stress test
 const OPERATION_IDLE_TIMEOUT_MS = 5000;
+const BASH_PATH = process.env.BASH_PATH || '/bin/bash';
 
 const PAYLOAD_MATRIX = [
   { name: '19-line payload', payload: createPayload(19), counts: [1, SEND_COUNT] },
@@ -39,7 +40,7 @@ function validateByteCount(content, label, expectedByteCount) {
 }
 
 const shellMatrix = [
-  { shellPath: '/bin/bash', shellArgs: ['-i'] },
+  { shellPath: BASH_PATH, shellArgs: ['-i'] },
   { shellPath: '/bin/zsh', shellArgs: ['-i'] },
 ];
 
