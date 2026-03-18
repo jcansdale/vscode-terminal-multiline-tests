@@ -5,26 +5,33 @@ const os = require('node:os');
 const path = require('node:path');
 const vscode = require('vscode');
 
-const LINE_COUNT = 19;
-const EXPECTED_LINES = [];
-for (let i = 1; i <= LINE_COUNT; i++) {
-  EXPECTED_LINES.push(`L${String(i).padStart(2, '0')} ${'a'.repeat(51)}`);
+function createPayload(lineCount) {
+  const expectedLines = [];
+  for (let i = 1; i <= lineCount; i++) {
+    expectedLines.push(`L${String(i).padStart(2, '0')} ${'a'.repeat(51)}`);
+  }
+
+  return {
+    lineCount,
+    expectedByteCount: expectedLines.join('\n').length + 1,
+    command: `echo '${expectedLines.join('\n')}' | wc -c`,
+  };
 }
 
-// Total bytes: 19 lines × 55 chars + 18 newlines between lines + 1 trailing newline from echo = 1064
-const EXPECTED_BYTE_COUNT = EXPECTED_LINES.join('\n').length + 1;
+const SEND_COUNT = 5;  // Run 5x to stress test
 
-const ECHO_BODY = `echo '${EXPECTED_LINES.join('\n')}'`;
+const PAYLOAD_MATRIX = [
+  { name: '19-line payload', payload: createPayload(19), counts: [1, SEND_COUNT] },
+  { name: '50-line payload', payload: createPayload(50), counts: [SEND_COUNT] },
+];
 
-const COMMAND = `${ECHO_BODY} | wc -c`;
-
-function validateByteCount(content, label) {
+function validateByteCount(content, label, expectedByteCount) {
   const actual = parseInt(content.trim(), 10);
   if (isNaN(actual)) {
     return `${label}: expected a number, got ${JSON.stringify(content.trim())}`;
   }
-  if (actual !== EXPECTED_BYTE_COUNT) {
-    return `${label}: expected ${EXPECTED_BYTE_COUNT} bytes, got ${actual}`;
+  if (actual !== expectedByteCount) {
+    return `${label}: expected ${expectedByteCount} bytes, got ${actual}`;
   }
   return null;
 }
@@ -137,8 +144,6 @@ async function getTerminalContents(terminal) {
   return contents;
 }
 
-const SEND_COUNT = 5;  // Run 5x to stress test
-
 async function createTempDir() {
   return await fs.mkdtemp(path.join(os.tmpdir(), 'vscode-terminal-repro-'));
 }
@@ -174,13 +179,13 @@ async function warmupShellIntegration(shell) {
   }
 }
 
-async function assertExpectedOutput(outputs, name, terminal) {
+async function assertExpectedOutput(outputs, name, terminal, expectedByteCount) {
   const errors = [];
   for (const { label, content } of outputs) {
     if (content === '<timed out>') {
       errors.push(`${label}: timed out`);
     } else {
-      const err = validateByteCount(content, label);
+      const err = validateByteCount(content, label, expectedByteCount);
       if (err) {
         errors.push(err);
       }
@@ -222,8 +227,9 @@ suite('Multiline terminal repro', () => {
   for (const shell of shellMatrix) {
     const shellName = path.basename(shell.shellPath);
 
-    for (const count of [1, SEND_COUNT]) {
-    test(`executeCommand ${count}x (${shellName})`, async function () {
+    for (const { name: payloadName, payload, counts } of PAYLOAD_MATRIX) {
+    for (const count of counts) {
+    test(`executeCommand ${count}x (${shellName}, ${payloadName})`, async function () {
       if (!fsSync.existsSync(shell.shellPath)) {
         this.skip();
       }
@@ -241,7 +247,7 @@ suite('Multiline terminal repro', () => {
         const shellIntegration = await getShellIntegrationWithWarmup(terminal, shell.shellPath);
 
         if (!shellIntegration) {
-          console.log(`Skipping executeCommand ${count}x (${shellName}): shell integration unavailable`);
+          console.log(`Skipping executeCommand ${count}x (${shellName}, ${payloadName}): shell integration unavailable`);
           this.skip();
         }
 
@@ -249,7 +255,7 @@ suite('Multiline terminal repro', () => {
         for (let i = 1; i <= count; i++) {
           const filePath = path.join(tempDir, `output-${i}.txt`);
           const completionPromise = waitForCommandCompletion(terminal, 7000);
-          shellIntegration.executeCommand(`${COMMAND} > "${filePath}"`);
+          shellIntegration.executeCommand(`${payload.command} > "${filePath}"`);
           let content;
           try {
             content = await waitForFileText(filePath, 7000, `#${i} executeCommand`);
@@ -265,14 +271,14 @@ suite('Multiline terminal repro', () => {
             break;
           }
         }
-        await assertExpectedOutput(outputs, `executeCommand ${count}x ${shellName}`, terminal);
+        await assertExpectedOutput(outputs, `executeCommand ${count}x ${shellName} (${payloadName})`, terminal, payload.expectedByteCount);
       } finally {
         terminal.dispose();
         await cleanupTempDir(tempDir);
       }
     })
 
-    test(`sendText ${count}x (${shellName})`, async function () {
+    test(`sendText ${count}x (${shellName}, ${payloadName})`, async function () {
       if (!fsSync.existsSync(shell.shellPath)) {
         this.skip();
       }
@@ -307,7 +313,7 @@ suite('Multiline terminal repro', () => {
             ? waitForCommandCompletion(terminal, 7000)
             : null;
           
-          terminal.sendText(`${COMMAND} > "${filePath}"`, true);
+          terminal.sendText(`${payload.command} > "${filePath}"`, true);
           
           let content;
           try {
@@ -328,12 +334,13 @@ suite('Multiline terminal repro', () => {
             break;
           }
         }
-        await assertExpectedOutput(outputs, `sendText ${count}x ${shellName}`, terminal);
+        await assertExpectedOutput(outputs, `sendText ${count}x ${shellName} (${payloadName})`, terminal, payload.expectedByteCount);
       } finally {
         terminal.dispose();
         await cleanupTempDir(tempDir);
       }
     });
+    }
     }
   }
 });
