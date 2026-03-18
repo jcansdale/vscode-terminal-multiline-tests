@@ -92,15 +92,29 @@ jobs:
       - name: Download Electron
         working-directory: vscode-src
         run: npm run electron
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Find Electron binary
         id: electron
         run: |
+          echo "Contents of .build/electron/:"
+          ls -la "$GITHUB_WORKSPACE/vscode-src/.build/electron/" 2>/dev/null || echo "Directory does not exist"
+          echo "---"
           if [[ "$RUNNER_OS" == "macOS" ]]; then
-            ELECTRON_PATH="$GITHUB_WORKSPACE/vscode-src/.build/electron/Code - OSS.app/Contents/MacOS/Electron"
+            # Find the actual .app bundle
+            APP_PATH=$(find "$GITHUB_WORKSPACE/vscode-src/.build/electron" -name "*.app" -maxdepth 1 2>/dev/null | head -1)
+            if [[ -n "$APP_PATH" ]]; then
+              ELECTRON_PATH="$APP_PATH/Contents/MacOS/Electron"
+            else
+              echo "No .app bundle found, listing .build/electron recursively:"
+              find "$GITHUB_WORKSPACE/vscode-src/.build/electron" -type f -name "Electron" -o -name "electron" 2>/dev/null
+              ELECTRON_PATH="$GITHUB_WORKSPACE/vscode-src/.build/electron/Code - OSS.app/Contents/MacOS/Electron"
+            fi
           else
             ELECTRON_PATH="$GITHUB_WORKSPACE/vscode-src/.build/electron/code-oss"
           fi
+          echo "Electron path: $ELECTRON_PATH"
           echo "path=$ELECTRON_PATH" >> "$GITHUB_OUTPUT"
           ls -la "$ELECTRON_PATH" || echo "WARNING: Electron binary not found at expected path"
 
