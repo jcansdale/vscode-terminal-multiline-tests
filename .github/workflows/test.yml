@@ -34,14 +34,12 @@ jobs:
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a npm test
-        continue-on-error: true
         env:
           VSCODE_VERSION: ${{ matrix.vscode-version }}
           TEST_RESULTS_PATH: ${{ runner.temp }}/test-results.json
       - name: Run tests (macOS)
         if: runner.os == 'macOS'
         run: npm test
-        continue-on-error: true
         env:
           BASH_PATH: ${{ steps.bash-path.outputs.path }}
           VSCODE_VERSION: ${{ matrix.vscode-version }}
@@ -142,7 +140,6 @@ jobs:
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a npm test
-        continue-on-error: true
         env:
           VSCODE_PATH: ${{ steps.electron.outputs.path }}
           VSCODE_SOURCE_DIR: ${{ github.workspace }}/vscode-src
@@ -151,7 +148,6 @@ jobs:
       - name: Run tests (macOS)
         if: runner.os == 'macOS'
         run: npm test
-        continue-on-error: true
         env:
           BASH_PATH: ${{ steps.bash-path.outputs.path }}
           VSCODE_PATH: ${{ steps.electron.outputs.path }}
