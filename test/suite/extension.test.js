@@ -22,6 +22,7 @@ const SEND_COUNT = 5;  // Run 5x to stress test
 
 const PAYLOAD_MATRIX = [
   { name: '19-line payload', payload: createPayload(19), counts: [1, SEND_COUNT] },
+  { name: '40-line payload', payload: createPayload(40), counts: [SEND_COUNT] },
   { name: '50-line payload', payload: createPayload(50), counts: [SEND_COUNT] },
 ];
 
