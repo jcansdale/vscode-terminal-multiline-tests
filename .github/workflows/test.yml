@@ -91,7 +91,7 @@ jobs:
 
       - name: Download Electron
         working-directory: vscode-src
-        run: npx gulp electron
+        run: npm run electron
 
       - name: Find Electron binary
         id: electron
