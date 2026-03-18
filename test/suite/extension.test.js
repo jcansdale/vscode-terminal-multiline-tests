@@ -150,8 +150,12 @@ async function waitForCommandCompletion(terminal, timeoutMs = 5000) {
   });
 }
 
+function isZshShell(shellPath) {
+  return path.basename(shellPath) === 'zsh';
+}
+
 function getShellIntegrationTimeout(shellPath) {
-  if (process.platform === 'darwin' && shellPath === '/bin/zsh') {
+  if (isZshShell(shellPath)) {
     return 20000;
   }
 
@@ -166,7 +170,7 @@ async function getShellIntegrationWithWarmup(terminal, shellPath) {
     return shellIntegration;
   }
 
-  if (process.platform === 'darwin' && shellPath === '/bin/zsh') {
+  if (isZshShell(shellPath)) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       terminal.sendText('echo ready', true);
       await new Promise(resolve => setTimeout(resolve, 2000));
