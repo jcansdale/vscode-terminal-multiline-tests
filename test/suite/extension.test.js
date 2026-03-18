@@ -155,6 +155,25 @@ function createTerminal(name, shellPath, shellArgs) {
   });
 }
 
+async function warmupShellIntegration(shell) {
+  if (!fsSync.existsSync(shell.shellPath)) {
+    return;
+  }
+
+  const shellName = path.basename(shell.shellPath);
+  const terminal = createTerminal(`shellIntegration warmup ${shellName}`, shell.shellPath, shell.defaultArgs);
+
+  try {
+    terminal.show(true);
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    const shellIntegration = await getShellIntegrationWithWarmup(terminal, shell.shellPath);
+    console.log(`shell integration warmup (${shellName}): ${shellIntegration ? 'ready' : 'unavailable'}`);
+  } finally {
+    terminal.dispose();
+  }
+}
+
 async function assertExpectedOutput(outputs, name, terminal) {
   const errors = [];
   for (const { label, content } of outputs) {
@@ -192,6 +211,10 @@ suite('Multiline terminal repro', () => {
   suiteSetup(async () => {
     // Enable shell integration like terminal-mcp does
     await vscode.workspace.getConfiguration('terminal.integrated').update('shellIntegration.enabled', true, vscode.ConfigurationTarget.Global);
+
+    for (const shell of shellMatrix) {
+      await warmupShellIntegration(shell);
+    }
   });
 
   for (const shell of shellMatrix) {
