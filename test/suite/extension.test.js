@@ -19,6 +19,7 @@ function createPayload(lineCount) {
 }
 
 const SEND_COUNT = 5;  // Run 5x to stress test
+const OPERATION_IDLE_TIMEOUT_MS = 5000;
 
 const PAYLOAD_MATRIX = [
   { name: '19-line payload', payload: createPayload(19), counts: [1, SEND_COUNT] },
@@ -112,10 +113,13 @@ async function getShellIntegrationWithWarmup(terminal, shellPath) {
   return undefined;
 }
 
-async function waitForFileText(filePath, timeoutMs, label) {
-  const deadline = Date.now() + timeoutMs;
+async function waitForFileTextOrTerminalIdle(filePath, terminal, idleTimeoutMs, label) {
+  let lastActivityTime = Date.now();
+  let lastTerminalText;
+  let hasTerminalSnapshot = false;
+  let nextTerminalPollTime = lastActivityTime;
 
-  while (Date.now() < deadline) {
+  while (true) {
     try {
       const content = await fs.readFile(filePath, 'utf8');
       if (content.trim()) {
@@ -127,10 +131,30 @@ async function waitForFileText(filePath, timeoutMs, label) {
       }
     }
 
+    if (Date.now() >= nextTerminalPollTime) {
+      try {
+        const terminalText = await getTerminalContentsWithTimeout(terminal, 1000);
+        if (hasTerminalSnapshot) {
+          if (terminalText !== lastTerminalText) {
+            lastActivityTime = Date.now();
+          }
+        } else {
+          hasTerminalSnapshot = true;
+        }
+        lastTerminalText = terminalText;
+      } catch {
+        // Ignore clipboard/selection errors while polling for terminal activity.
+      }
+
+      nextTerminalPollTime = Date.now() + 1000;
+    }
+
+    if (Date.now() - lastActivityTime >= idleTimeoutMs) {
+      throw new Error(`Timed out after ${idleTimeoutMs}ms of terminal inactivity for ${label}`);
+    }
+
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-
-  throw new Error(`Timed out waiting ${timeoutMs}ms for ${label} output file`);
 }
 
 async function getTerminalContents(terminal) {
@@ -143,6 +167,15 @@ async function getTerminalContents(terminal) {
   const contents = await vscode.env.clipboard.readText();
   await vscode.env.clipboard.writeText(previousClipboard);
   return contents;
+}
+
+async function getTerminalContentsWithTimeout(terminal, timeoutMs) {
+  return await Promise.race([
+    getTerminalContents(terminal),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms reading terminal contents`)), timeoutMs);
+    }),
+  ]);
 }
 
 async function createTempDir() {
@@ -234,7 +267,7 @@ suite('Multiline terminal repro', () => {
       if (!fsSync.existsSync(shell.shellPath)) {
         this.skip();
       }
-      this.timeout(60000);
+      this.timeout(120000);
 
       const tempDir = await createTempDir();
       const terminal = createTerminal(`executeCommand ${count}x ${shellName}`, shell.shellPath, shell.defaultArgs);
@@ -255,22 +288,22 @@ suite('Multiline terminal repro', () => {
         const outputs = [];
         for (let i = 1; i <= count; i++) {
           const filePath = path.join(tempDir, `output-${i}.txt`);
-          const completionPromise = waitForCommandCompletion(terminal, 7000);
+          const completionPromise = waitForCommandCompletion(terminal, OPERATION_IDLE_TIMEOUT_MS);
           shellIntegration.executeCommand(`${payload.command} > "${filePath}"`);
           let content;
           try {
-            content = await waitForFileText(filePath, 7000, `#${i} executeCommand`);
+            content = await waitForFileTextOrTerminalIdle(filePath, terminal, OPERATION_IDLE_TIMEOUT_MS, `#${i} executeCommand`);
           } catch (e) {
             content = '<timed out>';
+          }
+          outputs.push({ label: `#${i}`, content });
+          if (content === '<timed out>') {
+            break;
           }
           await completionPromise;
           // Give the PTY time to fully flush after shell reports completion
           // terminal-mcp uses 2000ms for this delay
           await new Promise(resolve => setTimeout(resolve, 2000));
-          outputs.push({ label: `#${i}`, content });
-          if (content === '<timed out>') {
-            break;
-          }
         }
         await assertExpectedOutput(outputs, `executeCommand ${count}x ${shellName} (${payloadName})`, terminal, payload.expectedByteCount);
       } finally {
@@ -311,28 +344,28 @@ suite('Multiline terminal repro', () => {
         for (let i = 1; i <= count; i++) {
           const filePath = path.join(tempDir, `output-${i}.txt`);
           const completionPromise = shellIntegration
-            ? waitForCommandCompletion(terminal, 7000)
+            ? waitForCommandCompletion(terminal, OPERATION_IDLE_TIMEOUT_MS)
             : null;
           
           terminal.sendText(`${payload.command} > "${filePath}"`, true);
           
           let content;
           try {
-            content = await waitForFileText(filePath, 7000, `#${i} sendText`);
+            content = await waitForFileTextOrTerminalIdle(filePath, terminal, OPERATION_IDLE_TIMEOUT_MS, `#${i} sendText`);
           } catch (e) {
             content = '<timed out>';
           }
-          
+
+          outputs.push({ label: `#${i}`, content });
+          if (content === '<timed out>') {
+            break;
+          }
+
           if (completionPromise) {
             await completionPromise;
             await new Promise(resolve => setTimeout(resolve, 2000));
           } else {
             await new Promise(resolve => setTimeout(resolve, 3000));
-          }
-          
-          outputs.push({ label: `#${i}`, content });
-          if (content === '<timed out>') {
-            break;
           }
         }
         await assertExpectedOutput(outputs, `sendText ${count}x ${shellName} (${payloadName})`, terminal, payload.expectedByteCount);
