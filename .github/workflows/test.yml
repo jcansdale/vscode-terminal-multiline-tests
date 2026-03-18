@@ -34,3 +34,59 @@ jobs:
         run: npm test
         env:
           VSCODE_VERSION: ${{ matrix.vscode-version }}
+
+  test-vscode-pr:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    name: ${{ matrix.os }} / VS Code PR #302526
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+
+      - name: Install shells
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh dash
+
+      - name: Checkout VS Code PR
+        uses: actions/checkout@v4
+        with:
+          repository: microsoft/vscode
+          ref: refs/pull/302526/head
+          path: vscode-src
+
+      - name: Build VS Code from source
+        working-directory: vscode-src
+        run: |
+          yarn --frozen-lockfile --network-timeout 180000
+          yarn compile
+
+      - name: Find Electron binary
+        id: electron
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            ELECTRON_PATH="$GITHUB_WORKSPACE/vscode-src/.build/electron/Code - OSS.app/Contents/MacOS/Electron"
+          else
+            ELECTRON_PATH="$GITHUB_WORKSPACE/vscode-src/.build/electron/code-oss"
+          fi
+          echo "path=$ELECTRON_PATH" >> "$GITHUB_OUTPUT"
+          ls -la "$ELECTRON_PATH" || echo "WARNING: Electron binary not found at expected path"
+
+      - name: Run tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm test
+        env:
+          VSCODE_PATH: ${{ steps.electron.outputs.path }}
+          VSCODE_SOURCE_DIR: ${{ github.workspace }}/vscode-src
+
+      - name: Run tests (macOS)
+        if: runner.os == 'macOS'
+        run: npm test
+        env:
+          VSCODE_PATH: ${{ steps.electron.outputs.path }}
+          VSCODE_SOURCE_DIR: ${{ github.workspace }}/vscode-src
