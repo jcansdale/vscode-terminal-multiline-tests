@@ -105,10 +105,18 @@ jobs:
             # Find the actual .app bundle
             APP_PATH=$(find "$GITHUB_WORKSPACE/vscode-src/.build/electron" -name "*.app" -maxdepth 1 2>/dev/null | head -1)
             if [[ -n "$APP_PATH" ]]; then
-              ELECTRON_PATH="$APP_PATH/Contents/MacOS/Electron"
+              echo "Found app bundle: $APP_PATH"
+              echo "Contents/MacOS/:"
+              ls -la "$APP_PATH/Contents/MacOS/" 2>/dev/null || echo "MacOS dir missing"
+              # Find the actual executable
+              ELECTRON_PATH=$(find "$APP_PATH/Contents/MacOS" -type f -perm +111 2>/dev/null | head -1)
+              if [[ -z "$ELECTRON_PATH" ]]; then
+                echo "No executable found in MacOS dir, trying Electron name"
+                ELECTRON_PATH="$APP_PATH/Contents/MacOS/Electron"
+              fi
             else
               echo "No .app bundle found, listing .build/electron recursively:"
-              find "$GITHUB_WORKSPACE/vscode-src/.build/electron" -type f -name "Electron" -o -name "electron" 2>/dev/null
+              find "$GITHUB_WORKSPACE/vscode-src/.build/electron" -type f 2>/dev/null | head -20
               ELECTRON_PATH="$GITHUB_WORKSPACE/vscode-src/.build/electron/Code - OSS.app/Contents/MacOS/Electron"
             fi
           else
