@@ -73,6 +73,14 @@ async function waitForCommandCompletion(terminal, timeoutMs = 5000) {
   });
 }
 
+function getShellIntegrationTimeout(shellPath) {
+  if (process.platform === 'darwin' && shellPath === '/bin/zsh') {
+    return 10000;
+  }
+
+  return 5000;
+}
+
 async function waitForFileText(filePath, timeoutMs, label) {
   const deadline = Date.now() + timeoutMs;
 
@@ -179,8 +187,19 @@ suite('Multiline terminal repro', () => {
       try {
         terminal.show(true);
 
-        const shellIntegration = await waitForShellIntegration(terminal, 5000);
+        // Give the shell a moment to start before waiting for integration.
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        let shellIntegration = await waitForShellIntegration(terminal, getShellIntegrationTimeout(shell.shellPath));
         if (!shellIntegration) {
+          // A trivial warm-up command helps zsh on macOS finish initializing shell integration.
+          terminal.sendText('echo ready', true);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          shellIntegration = terminal.shellIntegration || await waitForShellIntegration(terminal, 3000);
+        }
+
+        if (!shellIntegration) {
+          console.log(`Skipping executeCommand ${count}x (${shellName}): shell integration unavailable`);
           this.skip();
         }
 
