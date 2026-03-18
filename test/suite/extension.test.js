@@ -208,7 +208,9 @@ async function assertExpectedOutput(outputs, name, terminal) {
 }
 
 suite('Multiline terminal repro', () => {
-  suiteSetup(async () => {
+  suiteSetup(async function () {
+    this.timeout(60000);
+
     // Enable shell integration like terminal-mcp does
     await vscode.workspace.getConfiguration('terminal.integrated').update('shellIntegration.enabled', true, vscode.ConfigurationTarget.Global);
 
