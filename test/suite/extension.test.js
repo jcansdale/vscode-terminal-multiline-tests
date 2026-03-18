@@ -31,7 +31,7 @@ function validateByteCount(content, label) {
 
 const shellMatrix = [
   { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'], defaultArgs: [] },
-  { shellPath: '/bin/zsh', shellArgs: ['-f', '-i'], defaultArgs: [] },
+  { shellPath: '/bin/zsh', shellArgs: ['-i'], defaultArgs: [] },  // No -f to allow shell integration
   { shellPath: '/bin/dash', shellArgs: ['-i'], defaultArgs: ['-i'] },
 ];
 
@@ -51,6 +51,23 @@ async function waitForShellIntegration(terminal, timeoutMs) {
         clearTimeout(timeoutHandle);
         disposable.dispose();
         resolve(event.shellIntegration);
+      }
+    });
+  });
+}
+
+async function waitForCommandCompletion(terminal, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const timeoutHandle = setTimeout(() => {
+      disposable.dispose();
+      resolve(undefined);
+    }, timeoutMs);
+
+    const disposable = vscode.window.onDidEndTerminalShellExecution((event) => {
+      if (event.terminal === terminal) {
+        clearTimeout(timeoutHandle);
+        disposable.dispose();
+        resolve(event.execution);
       }
     });
   });
@@ -89,7 +106,7 @@ async function getTerminalContents(terminal) {
   return contents;
 }
 
-const SEND_COUNT = 5;
+const SEND_COUNT = 5;  // Run 5x to stress test
 
 async function createTempDir() {
   return await fs.mkdtemp(path.join(os.tmpdir(), 'vscode-terminal-repro-'));
@@ -141,17 +158,23 @@ async function assertExpectedOutput(outputs, name, terminal) {
 }
 
 suite('Multiline terminal repro', () => {
+  suiteSetup(async () => {
+    // Enable shell integration like terminal-mcp does
+    await vscode.workspace.getConfiguration('terminal.integrated').update('shellIntegration.enabled', true, vscode.ConfigurationTarget.Global);
+  });
+
   for (const shell of shellMatrix) {
     const shellName = path.basename(shell.shellPath);
 
-    test(`executeCommand ${SEND_COUNT}x (${shellName})`, async function () {
+    for (const count of [1, SEND_COUNT]) {
+    test(`executeCommand ${count}x (${shellName})`, async function () {
       if (!fsSync.existsSync(shell.shellPath)) {
         this.skip();
       }
-      this.timeout(20000);
+      this.timeout(60000);
 
       const tempDir = await createTempDir();
-      const terminal = createTerminal(`executeCommand ${shellName}`, shell.shellPath, shell.defaultArgs);
+      const terminal = createTerminal(`executeCommand ${count}x ${shellName}`, shell.shellPath, shell.defaultArgs);
 
       try {
         terminal.show(true);
@@ -162,8 +185,9 @@ suite('Multiline terminal repro', () => {
         }
 
         const outputs = [];
-        for (let i = 1; i <= SEND_COUNT; i++) {
+        for (let i = 1; i <= count; i++) {
           const filePath = path.join(tempDir, `output-${i}.txt`);
+          const completionPromise = waitForCommandCompletion(terminal, 7000);
           shellIntegration.executeCommand(`${COMMAND} > "${filePath}"`);
           let content;
           try {
@@ -171,26 +195,30 @@ suite('Multiline terminal repro', () => {
           } catch (e) {
             content = '<timed out>';
           }
+          await completionPromise;
+          // Give the PTY time to fully flush after shell reports completion
+          // terminal-mcp uses 2000ms for this delay
+          await new Promise(resolve => setTimeout(resolve, 2000));
           outputs.push({ label: `#${i}`, content });
           if (content === '<timed out>') {
             break;
           }
         }
-        await assertExpectedOutput(outputs, `executeCommand ${shellName}`, terminal);
+        await assertExpectedOutput(outputs, `executeCommand ${count}x ${shellName}`, terminal);
       } finally {
         terminal.dispose();
         await cleanupTempDir(tempDir);
       }
-    });
+    })
 
-    test(`sendText ${SEND_COUNT}x (${shellName})`, async function () {
+    test(`sendText ${count}x (${shellName})`, async function () {
       if (!fsSync.existsSync(shell.shellPath)) {
         this.skip();
       }
-      this.timeout(20000);
+      this.timeout(120000);
 
       const tempDir = await createTempDir();
-      const terminal = createTerminal(`sendText ${shellName}`, shell.shellPath, shell.shellArgs);
+      const terminal = createTerminal(`sendText ${count}x ${shellName}`, shell.shellPath, shell.shellArgs);
 
       try {
         terminal.show(true);
@@ -198,26 +226,53 @@ suite('Multiline terminal repro', () => {
         // Wait for shell to be ready before sending text
         await new Promise(resolve => setTimeout(resolve, 1000));
 
+        const shellIntegration = await waitForShellIntegration(terminal, 3000);
+        
+        // Warm-up command
+        if (shellIntegration) {
+          const warmupCompletion = waitForCommandCompletion(terminal, 5000);
+          terminal.sendText('echo ready', true);
+          await warmupCompletion;
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } else {
+          terminal.sendText('echo ready', true);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
         const outputs = [];
-        for (let i = 1; i <= SEND_COUNT; i++) {
+        for (let i = 1; i <= count; i++) {
           const filePath = path.join(tempDir, `output-${i}.txt`);
+          const completionPromise = shellIntegration
+            ? waitForCommandCompletion(terminal, 7000)
+            : null;
+          
           terminal.sendText(`${COMMAND} > "${filePath}"`, true);
+          
           let content;
           try {
             content = await waitForFileText(filePath, 7000, `#${i} sendText`);
           } catch (e) {
             content = '<timed out>';
           }
+          
+          if (completionPromise) {
+            await completionPromise;
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } else {
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          }
+          
           outputs.push({ label: `#${i}`, content });
           if (content === '<timed out>') {
             break;
           }
         }
-        await assertExpectedOutput(outputs, `sendText ${shellName}`, terminal);
+        await assertExpectedOutput(outputs, `sendText ${count}x ${shellName}`, terminal);
       } finally {
         terminal.dispose();
         await cleanupTempDir(tempDir);
       }
     });
+    }
   }
 });
