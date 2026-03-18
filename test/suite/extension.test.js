@@ -52,29 +52,45 @@ function getVsCodeAppRoot() {
   return path.resolve(process.execPath, '..', 'resources', 'app');
 }
 
-function getShellIntegrationScriptPath(shellPath) {
+function getShellIntegrationScriptName(shellPath) {
   const shellName = path.basename(shellPath);
-  const scriptsDir = path.join(getVsCodeAppRoot(), 'out', 'vs', 'workbench', 'contrib', 'terminal', 'common', 'scripts');
 
   if (shellName === 'bash') {
-    return path.join(scriptsDir, 'shellIntegration-bash.sh');
+    return 'shellIntegration-bash.sh';
   }
 
   if (shellName === 'zsh') {
-    return path.join(scriptsDir, 'shellIntegration-rc.zsh');
+    return 'shellIntegration-rc.zsh';
   }
 
   throw new Error(`Unsupported shell for manual integration: ${shellPath}`);
+}
+
+function getShellIntegrationScriptPath(shellPath) {
+  const scriptName = getShellIntegrationScriptName(shellPath);
+  const candidatePaths = [
+    path.join(getVsCodeAppRoot(), 'out', 'vs', 'workbench', 'contrib', 'terminal', 'common', 'scripts', scriptName),
+  ];
+
+  if (process.env.VSCODE_SOURCE_DIR) {
+    candidatePaths.push(
+      path.join(process.env.VSCODE_SOURCE_DIR, 'src', 'vs', 'workbench', 'contrib', 'terminal', 'common', 'scripts', scriptName),
+      path.join(process.env.VSCODE_SOURCE_DIR, 'out', 'vs', 'workbench', 'contrib', 'terminal', 'common', 'scripts', scriptName),
+    );
+  }
+
+  const scriptPath = candidatePaths.find(candidatePath => fsSync.existsSync(candidatePath));
+  if (scriptPath) {
+    return scriptPath;
+  }
+
+  throw new Error(`Shell integration script not found. Tried: ${candidatePaths.join(', ')}`);
 }
 
 async function createManualShellEnv(shellPath) {
   const shellName = path.basename(shellPath);
   const shellHome = await fs.mkdtemp(path.join(os.tmpdir(), `vscode-shell-home-${shellName}-`));
   const scriptPath = getShellIntegrationScriptPath(shellPath);
-
-  if (!fsSync.existsSync(scriptPath)) {
-    throw new Error(`Shell integration script not found: ${scriptPath}`);
-  }
 
   if (shellName === 'bash') {
     await fs.writeFile(path.join(shellHome, '.bashrc'), `. "${scriptPath}"\n`, 'utf8');
