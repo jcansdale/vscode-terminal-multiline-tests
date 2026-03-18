@@ -39,9 +39,8 @@ function validateByteCount(content, label, expectedByteCount) {
 }
 
 const shellMatrix = [
-  // { shellPath: '/bin/bash', shellArgs: ['--norc', '--noprofile', '-i'], defaultArgs: [] },
-  { shellPath: '/bin/zsh', shellArgs: ['-i'], defaultArgs: [] },  // No -f to allow shell integration
-  // { shellPath: '/bin/dash', shellArgs: ['-i'], defaultArgs: ['-i'] },
+  { shellPath: '/bin/bash', shellArgs: ['-i'] },
+  { shellPath: '/bin/zsh', shellArgs: ['-i'] },
 ];
 
 async function waitForShellIntegration(terminal, timeoutMs) {
@@ -200,7 +199,7 @@ async function warmupShellIntegration(shell) {
   }
 
   const shellName = path.basename(shell.shellPath);
-  const terminal = createTerminal(`shellIntegration warmup ${shellName}`, shell.shellPath, shell.defaultArgs);
+  const terminal = createTerminal(`shellIntegration warmup ${shellName}`, shell.shellPath, shell.shellArgs);
 
   try {
     terminal.show(true);
@@ -270,7 +269,7 @@ suite('Multiline terminal repro', () => {
       this.timeout(120000);
 
       const tempDir = await createTempDir();
-      const terminal = createTerminal(`executeCommand ${count}x ${shellName}`, shell.shellPath, shell.defaultArgs);
+      const terminal = createTerminal(`executeCommand ${count}x ${shellName}`, shell.shellPath, shell.shellArgs);
 
       try {
         terminal.show(true);
