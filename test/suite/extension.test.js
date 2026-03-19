@@ -38,10 +38,12 @@ const OPERATION_IDLE_TIMEOUT_MS = 5000;
 const BASH_PATH = process.env.BASH_PATH || '/bin/bash';
 const PWSH_PATH = process.env.PWSH_PATH || 'pwsh';
 
+// These cases target the boundaries discussed in microsoft/vscode#296955:
+// 19 lines crosses the macOS 1024-byte canonical-input limit and 73 lines
+// lands just above Linux's default 4096-byte N_TTY buffer.
 const PAYLOAD_CONFIGS = [
   { name: '19-line payload', lineCount: 19, counts: [1, SEND_COUNT] },
-  { name: '40-line payload', lineCount: 40, counts: [SEND_COUNT] },
-  { name: '50-line payload', lineCount: 50, counts: [SEND_COUNT] },
+  { name: '73-line payload', lineCount: 73, counts: [SEND_COUNT] },
 ];
 
 function getPayloadMatrix(shellPath) {
