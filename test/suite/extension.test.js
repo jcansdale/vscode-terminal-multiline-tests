@@ -96,6 +96,8 @@ function isPwshShell(shellPath) {
   return name === 'pwsh' || name === 'pwsh.exe';
 }
 
+const GITBASH_PATH = process.env.GITBASH_PATH || 'C:\\Program Files\\Git\\bin\\bash.exe';
+
 const shellMatrix = [];
 if (process.platform !== 'win32') {
   shellMatrix.push(
@@ -105,6 +107,7 @@ if (process.platform !== 'win32') {
 }
 if (process.platform === 'win32') {
   shellMatrix.push(
+    { shellPath: GITBASH_PATH, shellArgs: ['-i'], manual: true },
     { shellPath: PWSH_PATH, shellArgs: [], manual: false },
   );
 }
