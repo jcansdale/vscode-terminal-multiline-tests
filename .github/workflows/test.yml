@@ -88,11 +88,6 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get install -y pkg-config libxkbfile-dev libkrb5-dev libgbm1
 
-      - name: Install native module build dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: npm install -g windows-build-tools
-        continue-on-error: true
-
       - name: Enable long paths (Windows)
         if: runner.os == 'Windows'
         run: git config --system core.longpaths true
@@ -179,9 +174,12 @@ jobs:
         id: electron-win
         shell: pwsh
         run: |
-          Set-Location "$env:GITHUB_WORKSPACE/vscode-src"
+          Set-Location (Join-Path $env:GITHUB_WORKSPACE "vscode-src")
           $appName = node -p "require('./product.json').applicationName"
-          $electronPath = "$env:GITHUB_WORKSPACE/vscode-src/.build/electron/$appName.exe"
+          $electronDir = Join-Path $env:GITHUB_WORKSPACE "vscode-src" ".build" "electron"
+          Write-Host "Electron directory contents:"
+          Get-ChildItem $electronDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+          $electronPath = Join-Path $electronDir "$appName.exe"
           Write-Host "Electron path: $electronPath"
           echo "path=$electronPath" >> $env:GITHUB_OUTPUT
           if (Test-Path $electronPath) { Get-Item $electronPath } else { Write-Host "WARNING: Electron binary not found at expected path" }
