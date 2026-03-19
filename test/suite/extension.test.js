@@ -18,15 +18,54 @@ function createPayload(lineCount) {
   };
 }
 
+function createPwshPayload(lineCount) {
+  const expectedLines = [];
+  for (let i = 1; i <= lineCount; i++) {
+    expectedLines.push(`L${String(i).padStart(2, '0')} ${'a'.repeat(51)}`);
+  }
+
+  const arrayElements = expectedLines.map(line => `"${line}"`).join('\n');
+
+  return {
+    lineCount,
+    expectedByteCount: expectedLines.join('\n').length + 1,
+    command: `$lines = @(\n${arrayElements}\n)\n($lines -join \"\`n\").Length + 1`,
+  };
+}
+
 const SEND_COUNT = 5;  // Run 5x to stress test
 const OPERATION_IDLE_TIMEOUT_MS = 5000;
 const BASH_PATH = process.env.BASH_PATH || '/bin/bash';
+const PWSH_PATH = process.env.PWSH_PATH || 'pwsh';
 
-const PAYLOAD_MATRIX = [
-  { name: '19-line payload', payload: createPayload(19), counts: [1, SEND_COUNT] },
-  { name: '40-line payload', payload: createPayload(40), counts: [SEND_COUNT] },
-  { name: '50-line payload', payload: createPayload(50), counts: [SEND_COUNT] },
+const PAYLOAD_CONFIGS = [
+  { name: '19-line payload', lineCount: 19, counts: [1, SEND_COUNT] },
+  { name: '40-line payload', lineCount: 40, counts: [SEND_COUNT] },
+  { name: '50-line payload', lineCount: 50, counts: [SEND_COUNT] },
 ];
+
+function getPayloadMatrix(shellPath) {
+  const factory = isPwshShell(shellPath) ? createPwshPayload : createPayload;
+  return PAYLOAD_CONFIGS.map(({ name, lineCount, counts }) => ({
+    name,
+    payload: factory(lineCount),
+    counts,
+  }));
+}
+
+function makeRedirectCommand(shellPath, command, filePath) {
+  if (isPwshShell(shellPath)) {
+    return `${command} | Out-File -FilePath "${filePath}" -Encoding ascii -NoNewline`;
+  }
+  return `${command} > "${filePath}"`;
+}
+
+function makeWarmupCommand(shellPath) {
+  if (isPwshShell(shellPath)) {
+    return 'Write-Host ready';
+  }
+  return 'echo ready';
+}
 
 function validateByteCount(content, label, expectedByteCount) {
   const actual = parseInt(content.trim(), 10);
@@ -39,10 +78,43 @@ function validateByteCount(content, label, expectedByteCount) {
   return null;
 }
 
-const shellMatrix = [
-  { shellPath: BASH_PATH, shellArgs: ['-i'] },
-  { shellPath: '/bin/zsh', shellArgs: ['-i'] },
-];
+function isShellAvailable(shellPath) {
+  if (path.isAbsolute(shellPath)) {
+    return fsSync.existsSync(shellPath);
+  }
+  try {
+    const cmd = process.platform === 'win32' ? `where "${shellPath}"` : `which "${shellPath}"`;
+    require('child_process').execSync(cmd, { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPwshShell(shellPath) {
+  const name = shellBaseName(shellPath);
+  return name === 'pwsh';
+}
+
+function shellBaseName(shellPath) {
+  return path.basename(shellPath).replace(/\.exe$/i, '').toLowerCase();
+}
+
+const GITBASH_PATH = process.env.GITBASH_PATH || 'C:\\Program Files\\Git\\bin\\bash.exe';
+
+const shellMatrix = [];
+if (process.platform !== 'win32') {
+  shellMatrix.push(
+    { shellPath: BASH_PATH, shellArgs: ['-i'], manual: true },
+    { shellPath: '/bin/zsh', shellArgs: ['-i'], manual: true },
+  );
+}
+if (process.platform === 'win32') {
+  shellMatrix.push(
+    { shellPath: GITBASH_PATH, shellArgs: ['-i'], manual: true },
+    { shellPath: PWSH_PATH, shellArgs: [], manual: false },
+  );
+}
 
 function getVsCodeAppRoot() {
   if (process.resourcesPath) {
@@ -53,7 +125,7 @@ function getVsCodeAppRoot() {
 }
 
 function getShellIntegrationScriptName(shellPath) {
-  const shellName = path.basename(shellPath);
+  const shellName = shellBaseName(shellPath);
 
   if (shellName === 'bash') {
     return 'shellIntegration-bash.sh';
@@ -88,7 +160,7 @@ function getShellIntegrationScriptPath(shellPath) {
 }
 
 async function createManualShellEnv(shellPath) {
-  const shellName = path.basename(shellPath);
+  const shellName = shellBaseName(shellPath);
   const shellHome = await fs.mkdtemp(path.join(os.tmpdir(), `vscode-shell-home-${shellName}-`));
   const scriptPath = getShellIntegrationScriptPath(shellPath);
 
@@ -151,7 +223,7 @@ async function waitForCommandCompletion(terminal, timeoutMs = 5000) {
 }
 
 function isZshShell(shellPath) {
-  return path.basename(shellPath) === 'zsh';
+  return shellBaseName(shellPath) === 'zsh';
 }
 
 function getShellIntegrationTimeout(shellPath) {
@@ -268,23 +340,34 @@ function createTerminal(name, shellPath, shellArgs, env) {
 }
 
 async function warmupShellIntegration(shell) {
-  if (!fsSync.existsSync(shell.shellPath)) {
+  if (!isShellAvailable(shell.shellPath)) {
     return;
   }
 
-  const shellName = path.basename(shell.shellPath);
-  const { env, shellHome } = await createManualShellEnv(shell.shellPath);
-  const terminal = createTerminal(`shellIntegration warmup ${shellName} manual`, shell.shellPath, shell.shellArgs, env);
+  const shellName = shellBaseName(shell.shellPath);
+  let env = {};
+  let shellHome;
+
+  if (shell.manual) {
+    const manualEnv = await createManualShellEnv(shell.shellPath);
+    env = manualEnv.env;
+    shellHome = manualEnv.shellHome;
+  }
+
+  const label = shell.manual ? 'manual' : 'auto';
+  const terminal = createTerminal(`shellIntegration warmup ${shellName} ${label}`, shell.shellPath, shell.shellArgs, env);
 
   try {
     terminal.show(true);
     await new Promise(resolve => setTimeout(resolve, 1000));
 
     const shellIntegration = await getShellIntegrationWithWarmup(terminal, shell.shellPath);
-    console.log(`shell integration warmup (${shellName}): ${shellIntegration ? 'ready' : 'unavailable'}`);
+    console.log(`shell integration warmup (${shellName} ${label}): ${shellIntegration ? 'ready' : 'unavailable'}`);
   } finally {
     terminal.dispose();
-    await cleanupTempDir(shellHome);
+    if (shellHome) {
+      await cleanupTempDir(shellHome);
+    }
   }
 }
 
@@ -334,18 +417,28 @@ suite('Multiline terminal repro', () => {
   });
 
   for (const shell of shellMatrix) {
-    const shellName = `${path.basename(shell.shellPath)} manual`;
+    const shellLabel = shell.manual ? 'manual' : 'auto';
+    const shellName = `${path.basename(shell.shellPath)} ${shellLabel}`;
+    const payloadMatrix = getPayloadMatrix(shell.shellPath);
 
-    for (const { name: payloadName, payload, counts } of PAYLOAD_MATRIX) {
+    for (const { name: payloadName, payload, counts } of payloadMatrix) {
     for (const count of counts) {
     test(`executeCommand ${count}x (${shellName}, ${payloadName})`, async function () {
-      if (!fsSync.existsSync(shell.shellPath)) {
+      if (!isShellAvailable(shell.shellPath)) {
         this.skip();
       }
       this.timeout(120000);
 
       const tempDir = await createTempDir();
-      const { env, shellHome } = await createManualShellEnv(shell.shellPath);
+      let env = {};
+      let shellHome;
+
+      if (shell.manual) {
+        const manualEnv = await createManualShellEnv(shell.shellPath);
+        env = manualEnv.env;
+        shellHome = manualEnv.shellHome;
+      }
+
       const terminal = createTerminal(`executeCommand ${count}x ${shellName}`, shell.shellPath, shell.shellArgs, env);
 
       try {
@@ -365,7 +458,7 @@ suite('Multiline terminal repro', () => {
         for (let i = 1; i <= count; i++) {
           const filePath = path.join(tempDir, `output-${i}.txt`);
           const completionPromise = waitForCommandCompletion(terminal, OPERATION_IDLE_TIMEOUT_MS);
-          shellIntegration.executeCommand(`${payload.command} > "${filePath}"`);
+          shellIntegration.executeCommand(makeRedirectCommand(shell.shellPath, payload.command, filePath));
           let content;
           try {
             content = await waitForFileTextOrTerminalIdle(filePath, terminal, OPERATION_IDLE_TIMEOUT_MS, `#${i} executeCommand`);
@@ -385,18 +478,28 @@ suite('Multiline terminal repro', () => {
       } finally {
         terminal.dispose();
         await cleanupTempDir(tempDir);
-        await cleanupTempDir(shellHome);
+        if (shellHome) {
+          await cleanupTempDir(shellHome);
+        }
       }
     })
 
     test(`sendText ${count}x (${shellName}, ${payloadName})`, async function () {
-      if (!fsSync.existsSync(shell.shellPath)) {
+      if (!isShellAvailable(shell.shellPath)) {
         this.skip();
       }
       this.timeout(120000);
 
       const tempDir = await createTempDir();
-      const { env, shellHome } = await createManualShellEnv(shell.shellPath);
+      let env = {};
+      let shellHome;
+
+      if (shell.manual) {
+        const manualEnv = await createManualShellEnv(shell.shellPath);
+        env = manualEnv.env;
+        shellHome = manualEnv.shellHome;
+      }
+
       const terminal = createTerminal(`sendText ${count}x ${shellName}`, shell.shellPath, shell.shellArgs, env);
 
       try {
@@ -408,13 +511,14 @@ suite('Multiline terminal repro', () => {
         const shellIntegration = await getShellIntegrationWithWarmup(terminal, shell.shellPath);
         
         // Warm-up command
+        const warmupCmd = makeWarmupCommand(shell.shellPath);
         if (shellIntegration) {
           const warmupCompletion = waitForCommandCompletion(terminal, 5000);
-          terminal.sendText('echo ready', true);
+          terminal.sendText(warmupCmd, true);
           await warmupCompletion;
           await new Promise(resolve => setTimeout(resolve, 500));
         } else {
-          terminal.sendText('echo ready', true);
+          terminal.sendText(warmupCmd, true);
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
 
@@ -425,7 +529,7 @@ suite('Multiline terminal repro', () => {
             ? waitForCommandCompletion(terminal, OPERATION_IDLE_TIMEOUT_MS)
             : null;
           
-          terminal.sendText(`${payload.command} > "${filePath}"`, true);
+          terminal.sendText(makeRedirectCommand(shell.shellPath, payload.command, filePath), true);
           
           let content;
           try {
@@ -450,7 +554,9 @@ suite('Multiline terminal repro', () => {
       } finally {
         terminal.dispose();
         await cleanupTempDir(tempDir);
-        await cleanupTempDir(shellHome);
+        if (shellHome) {
+          await cleanupTempDir(shellHome);
+        }
       }
     });
     }

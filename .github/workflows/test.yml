@@ -1,4 +1,4 @@
-name: Tests
+name: Tests (VS Code PR #302526)
 
 on:
   push:
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         vscode-version: [stable, insiders]
     name: ${{ matrix.os }} / VS Code ${{ matrix.vscode-version }}
     steps:
@@ -44,6 +44,12 @@ jobs:
           BASH_PATH: ${{ steps.bash-path.outputs.path }}
           VSCODE_VERSION: ${{ matrix.vscode-version }}
           TEST_RESULTS_PATH: ${{ runner.temp }}/test-results.json
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        run: npm test
+        env:
+          VSCODE_VERSION: ${{ matrix.vscode-version }}
+          TEST_RESULTS_PATH: ${{ runner.temp }}/test-results.json
       - name: Test summary
         if: always()
         run: node .github/scripts/test-summary.js
@@ -56,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     name: ${{ matrix.os }} / VS Code PR #302526
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +88,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get install -y pkg-config libxkbfile-dev libkrb5-dev libgbm1
 
+      - name: Enable long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
       - name: Checkout VS Code PR
         uses: actions/checkout@v4
         with:
@@ -94,7 +104,8 @@ jobs:
         with:
           node-version-file: vscode-src/.nvmrc
 
-      - name: Install VS Code dependencies
+      - name: Install VS Code dependencies (Unix)
+        if: runner.os != 'Windows'
         working-directory: vscode-src
         run: |
           for i in {1..5}; do
@@ -110,6 +121,26 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install VS Code dependencies (Windows)
+        if: runner.os == 'Windows'
+        working-directory: vscode-src
+        shell: pwsh
+        run: |
+          $maxRetries = 5
+          for ($i = 1; $i -le $maxRetries; $i++) {
+            npm ci
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($i -eq $maxRetries) {
+              Write-Error "npm ci failed too many times"
+              exit 1
+            }
+            Write-Host "npm ci failed $i, trying again..."
+          }
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Compile VS Code
         working-directory: vscode-src
         run: npm run compile
@@ -120,7 +151,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Find Electron binary
+      - name: Find Electron binary (Unix)
+        if: runner.os != 'Windows'
         id: electron
         run: |
           # Read product.json for the correct binary names
@@ -137,6 +169,21 @@ jobs:
           echo "path=$ELECTRON_PATH" >> "$GITHUB_OUTPUT"
           ls -la "$ELECTRON_PATH" || echo "WARNING: Electron binary not found at expected path"
 
+      - name: Find Electron binary (Windows)
+        if: runner.os == 'Windows'
+        id: electron-win
+        shell: pwsh
+        run: |
+          Set-Location (Join-Path $env:GITHUB_WORKSPACE "vscode-src")
+          $nameLong = node -p "require('./product.json').nameLong"
+          $electronDir = Join-Path $env:GITHUB_WORKSPACE "vscode-src" ".build" "electron"
+          Write-Host "Electron directory contents:"
+          Get-ChildItem $electronDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+          $electronPath = Join-Path $electronDir "$nameLong.exe"
+          Write-Host "Electron path: $electronPath"
+          echo "path=$electronPath" >> $env:GITHUB_OUTPUT
+          if (Test-Path $electronPath) { Get-Item $electronPath } else { Write-Host "WARNING: Electron binary not found at expected path" }
+
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
         run: xvfb-run -a npm test
@@ -151,6 +198,14 @@ jobs:
         env:
           BASH_PATH: ${{ steps.bash-path.outputs.path }}
           VSCODE_PATH: ${{ steps.electron.outputs.path }}
+          VSCODE_SOURCE_DIR: ${{ github.workspace }}/vscode-src
+          TEST_RESULTS_PATH: ${{ runner.temp }}/test-results.json
+
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
+        run: npm test
+        env:
+          VSCODE_PATH: ${{ steps.electron-win.outputs.path }}
           VSCODE_SOURCE_DIR: ${{ github.workspace }}/vscode-src
           TEST_RESULTS_PATH: ${{ runner.temp }}/test-results.json
 
