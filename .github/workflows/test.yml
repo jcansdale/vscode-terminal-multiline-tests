@@ -175,11 +175,11 @@ jobs:
         shell: pwsh
         run: |
           Set-Location (Join-Path $env:GITHUB_WORKSPACE "vscode-src")
-          $appName = node -p "require('./product.json').applicationName"
+          $nameLong = node -p "require('./product.json').nameLong"
           $electronDir = Join-Path $env:GITHUB_WORKSPACE "vscode-src" ".build" "electron"
           Write-Host "Electron directory contents:"
           Get-ChildItem $electronDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
-          $electronPath = Join-Path $electronDir "$appName.exe"
+          $electronPath = Join-Path $electronDir "$nameLong.exe"
           Write-Host "Electron path: $electronPath"
           echo "path=$electronPath" >> $env:GITHUB_OUTPUT
           if (Test-Path $electronPath) { Get-Item $electronPath } else { Write-Host "WARNING: Electron binary not found at expected path" }
