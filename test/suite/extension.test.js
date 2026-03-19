@@ -92,8 +92,12 @@ function isShellAvailable(shellPath) {
 }
 
 function isPwshShell(shellPath) {
-  const name = path.basename(shellPath).toLowerCase();
-  return name === 'pwsh' || name === 'pwsh.exe';
+  const name = shellBaseName(shellPath);
+  return name === 'pwsh';
+}
+
+function shellBaseName(shellPath) {
+  return path.basename(shellPath).replace(/\.exe$/i, '').toLowerCase();
 }
 
 const GITBASH_PATH = process.env.GITBASH_PATH || 'C:\\Program Files\\Git\\bin\\bash.exe';
@@ -121,7 +125,7 @@ function getVsCodeAppRoot() {
 }
 
 function getShellIntegrationScriptName(shellPath) {
-  const shellName = path.basename(shellPath);
+  const shellName = shellBaseName(shellPath);
 
   if (shellName === 'bash') {
     return 'shellIntegration-bash.sh';
@@ -156,7 +160,7 @@ function getShellIntegrationScriptPath(shellPath) {
 }
 
 async function createManualShellEnv(shellPath) {
-  const shellName = path.basename(shellPath);
+  const shellName = shellBaseName(shellPath);
   const shellHome = await fs.mkdtemp(path.join(os.tmpdir(), `vscode-shell-home-${shellName}-`));
   const scriptPath = getShellIntegrationScriptPath(shellPath);
 
@@ -219,7 +223,7 @@ async function waitForCommandCompletion(terminal, timeoutMs = 5000) {
 }
 
 function isZshShell(shellPath) {
-  return path.basename(shellPath) === 'zsh';
+  return shellBaseName(shellPath) === 'zsh';
 }
 
 function getShellIntegrationTimeout(shellPath) {
@@ -340,7 +344,7 @@ async function warmupShellIntegration(shell) {
     return;
   }
 
-  const shellName = path.basename(shell.shellPath);
+  const shellName = shellBaseName(shell.shellPath);
   let env = {};
   let shellHome;
 
