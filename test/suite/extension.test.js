@@ -35,7 +35,11 @@ function createPwshPayload(lineCount) {
 
 const SEND_COUNT = 5;  // Run 5x to stress test
 const OPERATION_IDLE_TIMEOUT_MS = 5000;
-const BASH_PATH = process.env.BASH_PATH || '/bin/bash';
+// On macOS we require Homebrew bash (v4+) for bracketed paste mode support.
+// If Homebrew bash isn't installed, the bash tests will be skipped.
+const BASH_PATH = process.env.BASH_PATH || (process.platform === 'darwin'
+  ? (fsSync.existsSync('/opt/homebrew/bin/bash') ? '/opt/homebrew/bin/bash' : '/usr/local/bin/bash')
+  : '/bin/bash');
 const PWSH_PATH = process.env.PWSH_PATH || 'pwsh';
 
 // These cases target the boundaries discussed in microsoft/vscode#296955:
