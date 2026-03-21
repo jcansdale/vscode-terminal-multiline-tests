@@ -69,7 +69,7 @@ const PWSH_PATH = process.env.PWSH_PATH || 'pwsh';
 // 19 lines crosses the macOS 1024-byte canonical-input limit and 73 lines
 // lands just above Linux's default 4096-byte N_TTY buffer.
 const PAYLOAD_CONFIGS = [
-  { name: 'single-line payload', createPayload, createPwshPayload: createPwshSingleLinePayload, size: LONG_SINGLE_LINE_LENGTH, counts: [1, SEND_COUNT] },
+  { name: 'single-line payload', createPayload: createSingleLinePayload, createPwshPayload: createPwshSingleLinePayload, size: LONG_SINGLE_LINE_LENGTH, counts: [1, SEND_COUNT] },
   { name: '19-line payload', createPayload, createPwshPayload, size: 19, counts: [1, SEND_COUNT] },
   { name: '73-line payload', createPayload, createPwshPayload, size: 73, counts: [SEND_COUNT] },
 ];
