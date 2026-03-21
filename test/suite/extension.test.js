@@ -5,6 +5,8 @@ const os = require('node:os');
 const path = require('node:path');
 const vscode = require('vscode');
 
+const LONG_SINGLE_LINE_LENGTH = 1050;
+
 function createPayload(lineCount) {
   const expectedLines = [];
   for (let i = 1; i <= lineCount; i++) {
@@ -15,6 +17,16 @@ function createPayload(lineCount) {
     lineCount,
     expectedByteCount: expectedLines.join('\n').length + 1,
     command: `echo '${expectedLines.join('\n')}' | wc -c`,
+  };
+}
+
+function createSingleLinePayload(textLength) {
+  const line = 'a'.repeat(textLength);
+
+  return {
+    textLength,
+    expectedByteCount: line.length + 1,
+    command: `echo ${line} | wc -c`,
   };
 }
 
@@ -33,6 +45,16 @@ function createPwshPayload(lineCount) {
   };
 }
 
+function createPwshSingleLinePayload(textLength) {
+  const line = 'a'.repeat(textLength);
+
+  return {
+    textLength,
+    expectedByteCount: line.length + 1,
+    command: `("${line}").Length + 1`,
+  };
+}
+
 const SEND_COUNT = 5;  // Run 5x to stress test
 const OPERATION_IDLE_TIMEOUT_MS = 5000;
 // On macOS we require Homebrew bash (v4+) for bracketed paste mode support.
@@ -43,18 +65,19 @@ const BASH_PATH = process.env.BASH_PATH || (process.platform === 'darwin'
 const PWSH_PATH = process.env.PWSH_PATH || 'pwsh';
 
 // These cases target the boundaries discussed in microsoft/vscode#296955:
+// one long line checks whether the 1024-byte issue is newline-sensitive,
 // 19 lines crosses the macOS 1024-byte canonical-input limit and 73 lines
 // lands just above Linux's default 4096-byte N_TTY buffer.
 const PAYLOAD_CONFIGS = [
-  { name: '19-line payload', lineCount: 19, counts: [1, SEND_COUNT] },
-  { name: '73-line payload', lineCount: 73, counts: [SEND_COUNT] },
+  { name: 'single-line payload', createPayload: createSingleLinePayload, createPwshPayload: createPwshSingleLinePayload, size: LONG_SINGLE_LINE_LENGTH, counts: [1, SEND_COUNT] },
+  { name: '19-line payload', createPayload, createPwshPayload, size: 19, counts: [1, SEND_COUNT] },
+  { name: '73-line payload', createPayload, createPwshPayload, size: 73, counts: [SEND_COUNT] },
 ];
 
 function getPayloadMatrix(shellPath) {
-  const factory = isPwshShell(shellPath) ? createPwshPayload : createPayload;
-  return PAYLOAD_CONFIGS.map(({ name, lineCount, counts }) => ({
+  return PAYLOAD_CONFIGS.map(({ name, createPayload, createPwshPayload, size, counts }) => ({
     name,
-    payload: factory(lineCount),
+    payload: (isPwshShell(shellPath) ? createPwshPayload : createPayload)(size),
     counts,
   }));
 }
